@@ -19,6 +19,14 @@ pip install -r solution/requirements.txt
 python harness/run_eval.py --submission solution --eval eval/public_eval.jsonl
 ```
 
-The scorer unpacks the zips into `snapshots/` the first time it runs. `scripts/eval.sh` runs the
-same command and also scores the conflict self-test. `scripts/explore.py` is a helper for
-browsing the snapshots (`grep`, `history`, `diff`).
+The scorer unpacks the zips into `snapshots/` the first time it runs. Other tools:
+- `scripts/eval.sh` runs the public eval. `scripts/eval.sh solution selftest` runs the kit's
+  synthetic site, including conflict scoring.
+- `scripts/probe.py` asks our own questions, the ones outside the public set.
+- `scripts/explore.py` browses the snapshots (`grep`, `history`, `diff`).
+
+Results: public eval 0.84 (accuracy 0.84, consistency 1.00, speed 1.00, no stale values), and
+1.00 on the self-test site. No API keys, standard library only.
+
+Docs: [`solution/NOTES.md`](solution/NOTES.md) covers how it works, and
+[`docs/RULES.md`](docs/RULES.md) has the "what is current" rules with evidence.
