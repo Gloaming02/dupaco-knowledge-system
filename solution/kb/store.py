@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from . import authority, dates
+from .facts import extract
 from .text import chunks
 from .urls import url_key
 
@@ -20,6 +21,7 @@ class PageVersion:
     tier: int
     printed_date: Optional[str]
     chunks: list = field(default_factory=list)
+    facts: list = field(default_factory=list)
 
 
 @dataclass
@@ -49,6 +51,7 @@ class Store:
                 snapshot_id=snapshot.snapshot_id, taken_on=snapshot.taken_on,
                 tier=authority.tier(p.url), printed_date=dates.page_date(p.markdown),
                 chunks=self._chunk_cache[h])
+            view.pages[key].facts = extract(view.pages[key])
         self.snapshots.append(view)
         self.snapshots.sort(key=lambda s: s.taken_on)
         return view

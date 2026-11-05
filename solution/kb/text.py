@@ -18,42 +18,64 @@ def clean(text: str) -> str:
     return _WS.sub(" ", text.replace("\\r\\n", " ").replace("<br>", " ")).strip()
 
 
-def chunks(markdown: str, title: str = "") -> list[str]:
-    """Paragraph chunks, plus one chunk per table row carrying its section label and header,
-    so a row like '| 60 Month | 1.79% | 1.80% |' still knows it is a business certificate."""
-    out, heading, label, para = [], title, "", []
-    header = None
+def iter_blocks(markdown: str, title: str = ""):
+    """Walk a page once, yielding
+         ("para", heading, text)                       for prose
+         ("row",  heading, label, header, cells)       for each table body row
+    `heading` is the nearest markdown heading, `label` the short caption line above a table."""
+    heading, label, para, header = title, "", [], None
 
     def flush():
         if para:
             t = clean(" ".join(para))
-            if len(t) > 20:
-                out.append(f"{heading}: {t}" if heading and heading not in t else t)
             para.clear()
+            if len(t) > 20:
+                return ("para", heading, t)
+        return None
 
     for raw in markdown.splitlines():
         line = raw.strip()
         if line.startswith("|"):
-            flush()
+            if (b := flush()):
+                yield b
             cells = [clean(c) for c in line.strip("|").split("|")]
             if all(set(c) <= set("-: ") for c in cells):
                 continue                                    # separator row
             if header is None:
                 header = cells
                 continue
-            pairs = [f"{h}: {c}" if h and h != c else c for h, c in zip(header, cells) if c]
-            ctx = " / ".join(x for x in (heading, label) if x)
-            out.append(f"{ctx} | " + " | ".join(pairs) if ctx else " | ".join(pairs))
+            yield ("row", heading, label, header, cells)
             continue
         header = None
         if line.startswith("#"):
-            flush()
+            if (b := flush()):
+                yield b
             heading, label = clean(line.lstrip("#")), ""
         elif not line:
-            flush()
+            if (b := flush()):
+                yield b
         else:
             if len(line) < 60 and not line.endswith((".", ":", "?", "!")) and not para:
                 label = clean(line)                          # short caption above a table
             para.append(line)
-    flush()
+    if (b := flush()):
+        yield b
+
+
+def row_text(heading: str, label: str, header: list, cells: list) -> str:
+    pairs = [f"{h}: {c}" if h and h != c else c for h, c in zip(header, cells) if c]
+    ctx = " / ".join(x for x in (heading, label) if x)
+    return (f"{ctx} | " if ctx else "") + " | ".join(pairs)
+
+
+def chunks(markdown: str, title: str = "") -> list[str]:
+    """Paragraph chunks, plus one chunk per table row carrying its section label and header,
+    so a row like '| 60 Month | 1.79% | 1.80% |' still knows it is a business certificate."""
+    out = []
+    for b in iter_blocks(markdown, title):
+        if b[0] == "para":
+            _, heading, t = b
+            out.append(f"{heading}: {t}" if heading and heading not in t else t)
+        else:
+            out.append(row_text(*b[1:]))
     return out

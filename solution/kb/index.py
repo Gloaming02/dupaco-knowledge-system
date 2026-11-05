@@ -28,6 +28,10 @@ class SnapshotIndex:
         n = len(lens)
         self.idf = {t: math.log(1 + (n - len(p) + 0.5) / (len(p) + 0.5)) for t, p in self.postings.items()}
 
+    def df(self, word: str) -> float:
+        """Share of passages containing `word` (unstemmed)."""
+        return len(self.postings.get(word.lower(), ())) / max(1, len(self.docs))
+
     def search(self, query: str, k: int = 10):
         scores = defaultdict(float)
         for t in set(tokens(query)):
