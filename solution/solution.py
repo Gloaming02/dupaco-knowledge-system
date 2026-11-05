@@ -1,46 +1,54 @@
 """
-Submission entry point (currently a copy of the starter; to be replaced).
+Knowledge system for the interface.ai build assignment.
 
-It keeps only the LATEST copy of each page and returns the paragraph that shares the most
-words with the question. It never notices that pages disagree, ignores `as_of`, and
-returns no conflicts. Your job is to do much better.
+    build() -> KnowledgeSystem with ingest(snapshot), answer(question, as_of), conflicts()
 
-Keep the `build()` function and the three methods; change everything else.
+The rules behind every decision are in docs/RULES.md. Layout:
+    kb/store.py      every version of every page, plus snapshot-by-date lookup (R1)
+    kb/authority.py  page trust tiers from the URL (R2)
+    kb/dates.py      dates printed on the page (R3)
+    kb/index.py      BM25 per snapshot, re-ranked by authority
 """
-import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(next(d / "harness" for d in Path(__file__).resolve().parents if (d / "harness" / "contract.py").exists())))
+_HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(_HERE))
+_harness = next((d / "harness" for d in _HERE.parents if (d / "harness" / "contract.py").exists()), None)
+if _harness:
+    sys.path.insert(0, str(_harness))
 from contract import Answer, Conflict, Snapshot, Source  # noqa: E402
 
-WORD = re.compile(r"[a-z0-9$%.]+")
+from kb.index import SnapshotIndex  # noqa: E402
+from kb.store import Store  # noqa: E402
+
+REFUSAL = ("I'm not able to confirm that from Dupaco's website, so I don't want to guess. "
+           "Please contact Dupaco or visit a branch for the current details.")
 
 
-class NaiveKnowledge:
+class KnowledgeSystem:
     def __init__(self):
-        self.pages = {}  # url -> (snapshot_id, markdown)
+        self.store = Store()
+        self.indexes = {}          # snapshot_id -> SnapshotIndex
+        self._tokens = {}          # chunk text -> token counts, shared across snapshots
 
+    # -- contract ---------------------------------------------------------------------------
     def ingest(self, snapshot: Snapshot) -> None:
-        for p in snapshot.pages:
-            self.pages[p.url] = (snapshot.snapshot_id, p.markdown)
+        view = self.store.add(snapshot)
+        self.indexes[view.snapshot_id] = SnapshotIndex(view, self._tokens)
 
     def answer(self, question, as_of=None):
-        q = set(WORD.findall(question.lower()))
-        best, best_score = None, 0
-        for url, (sid, md) in self.pages.items():
-            for para in md.split("\n\n"):
-                s = len(q & set(WORD.findall(para.lower())))
-                if s > best_score:
-                    best, best_score = (url, sid, para.strip()), s
-        if not best:
-            return Answer(text="I don't know.", confident=False)
-        url, sid, para = best
-        return Answer(text=para[:600], sources=[Source(url=url, snapshot_id=sid)])
+        view = self.store.at(as_of)
+        hits = self.indexes[view.snapshot_id].search(question, k=5)
+        if not hits:
+            return Answer(text=REFUSAL, confident=False)
+        _, page, passage = hits[0]
+        return Answer(text=passage[:600],
+                      sources=[Source(url=page.url, snapshot_id=page.snapshot_id, quote=passage[:200])])
 
     def conflicts(self):
         return []
 
 
 def build():
-    return NaiveKnowledge()
+    return KnowledgeSystem()
