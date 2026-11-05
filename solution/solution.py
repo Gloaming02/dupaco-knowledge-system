@@ -17,7 +17,34 @@ sys.path.insert(0, str(_HERE))
 _harness = next((d / "harness" for d in _HERE.parents if (d / "harness" / "contract.py").exists()), None)
 if _harness:
     sys.path.insert(0, str(_harness))
-from contract import Answer, Conflict, Snapshot, Source  # noqa: E402
+try:
+    from contract import Answer, Conflict, Snapshot, Source  # noqa: E402
+except ImportError:  # running without the kit's harness on the path: same shapes, local copy
+    from dataclasses import dataclass, field
+    from typing import Optional
+
+    @dataclass
+    class Source:
+        url: str
+        snapshot_id: Optional[str] = None
+        quote: Optional[str] = None
+
+    @dataclass
+    class Answer:
+        text: str
+        sources: list = field(default_factory=list)
+        confident: bool = True
+        conflict_note: Optional[str] = None
+
+    @dataclass
+    class Conflict:
+        topic: str
+        values: list
+        sources: list
+        resolution: Optional[str] = None
+        reason: Optional[str] = None
+
+    Snapshot = object
 
 import re  # noqa: E402
 
@@ -53,10 +80,19 @@ class KnowledgeSystem:
         self.linkbooks[view.snapshot_id] = LinkBook(view)
 
     def answer(self, question, as_of=None):
-        view = self.store.at(as_of)
+        if not self.store.snapshots:
+            return Answer(text=REFUSAL, confident=False)
+        question = str(question or "")
+        try:
+            view = self.store.at(as_of)
+        except Exception:
+            view = self.store.at(None)
         key = (view.snapshot_id, " ".join(question.lower().split()))
         if key not in self._cache:
-            self._cache[key] = self._answer(question, view)
+            try:
+                self._cache[key] = self._answer(question, view)
+            except Exception as e:      # never crash the scorer; an honest refusal beats an error
+                self._cache[key] = Answer(text=REFUSAL, confident=False, conflict_note=f"internal error: {e!r}")
         return self._cache[key]
 
     def _answer(self, question, view):
