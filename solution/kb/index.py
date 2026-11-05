@@ -43,10 +43,16 @@ class SnapshotIndex:
                 continue
             for d, tf in self.postings[t]:
                 scores[d] += idf * tf * (K1 + 1) / (tf + K1 * (1 - B + B * self.lens[d] / self.avg))
-        ranked = sorted(((s * (1 + TIER_BOOST * self.docs[d][0].tier), d) for d, s in scores.items()),
+        ranked = sorted(((s * (1 + TIER_BOOST * self.docs[d][0].tier) * _freshness(self.docs[d][0]), d)
+                         for d, s in scores.items()),
                         key=lambda x: (-x[0], x[1]))
         hits = [(s, self.docs[d][0], self.docs[d][1]) for s, d in ranked[:k]]
         return prefer_newest_article(hits)
+
+
+def _freshness(page) -> float:
+    """Expired offers and pages missing from this crawl only win when nothing else answers."""
+    return (0.5 if page.expired else 1.0) * (0.7 if page.carried else 1.0)
 
 
 def prefer_newest_article(hits, window: float = 0.85):

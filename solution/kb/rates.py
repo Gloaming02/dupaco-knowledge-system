@@ -202,7 +202,7 @@ class RateBook:
                 top = [f for f in top if v not in f.flags]
         # Rule R2 + R3: one page wins: highest authority, then newest printed date, then URL.
         def rank(f):
-            return (f.page.tier, f.page.printed_date or "", f.page.key)
+            return (not f.page.carried, f.page.tier, f.page.printed_date or "", f.page.key)
         win = max(top, key=rank)
         win_sec = win.section.split(" / ")[-1].lower()
         if rq.listing:

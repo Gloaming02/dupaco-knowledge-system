@@ -1,7 +1,7 @@
 """Every version of every page, keyed by (snapshot, url). Nothing is overwritten:
 history is what lets us answer `as_of` questions and explain conflicts."""
 from bisect import bisect_right
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from . import authority, dates
@@ -22,6 +22,9 @@ class PageVersion:
     printed_date: Optional[str]
     chunks: list = field(default_factory=list)
     facts: list = field(default_factory=list)
+    carried: bool = False          # not in this crawl; last version seen in an earlier one
+    expired: bool = False          # the page says its offer ended before this snapshot
+    stale_facts: list = field(default_factory=list)   # facts of an expired page (for conflicts only)
 
 
 @dataclass
@@ -51,7 +54,19 @@ class Store:
                 snapshot_id=snapshot.snapshot_id, taken_on=snapshot.taken_on,
                 tier=authority.tier(p.url), printed_date=dates.page_date(p.markdown),
                 chunks=self._chunk_cache[h])
-            view.pages[key].facts = extract(view.pages[key])
+            pv = view.pages[key]
+            ends = dates.end_dates(p.markdown)
+            pv.expired = bool(ends) and max(ends) < snapshot.taken_on
+            pv.facts = [] if pv.expired else extract(pv)
+            pv.stale_facts = extract(pv) if pv.expired else []
+        # Pages missing from this crawl are carried forward (flagged) from the previous view:
+        # a crawl can simply miss a page. Present pages always outrank carried ones.
+        if self.snapshots:
+            for key, old in self.snapshots[-1].pages.items():
+                if key not in view.pages:
+                    new = replace(old, carried=True)
+                    new.facts = [replace(f, page=new) for f in old.facts]
+                    view.pages[key] = new
         self.snapshots.append(view)
         self.snapshots.sort(key=lambda s: s.taken_on)
         return view

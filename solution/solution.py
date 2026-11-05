@@ -23,6 +23,7 @@ import re  # noqa: E402
 
 from kb import directory, rates  # noqa: E402
 from kb.links import INTENT as LINK_INTENT, LinkBook  # noqa: E402
+from kb.conflicts import find as find_conflicts  # noqa: E402
 from kb.index import SnapshotIndex  # noqa: E402
 from kb.store import Store  # noqa: E402
 
@@ -38,11 +39,13 @@ class KnowledgeSystem:
         self.linkbooks = {}        # snapshot_id -> LinkBook
         self._cache = {}           # (snapshot_id, question) -> Answer: same question, same answer (R8)
         self._stats_cache = {}
+        self._conflicts = None
         self._tokens = {}          # chunk text -> token counts, shared across snapshots
 
     # -- contract ---------------------------------------------------------------------------
     def ingest(self, snapshot: Snapshot) -> None:
         view = self.store.add(snapshot)
+        self._conflicts = None
         self.indexes[view.snapshot_id] = SnapshotIndex(view, self._tokens)
         self.ratebooks[view.snapshot_id] = rates.RateBook(
             [f for p in sorted(view.pages.values(), key=lambda p: p.key) for f in p.facts],
@@ -274,7 +277,9 @@ class KnowledgeSystem:
         return None
 
     def conflicts(self):
-        return []
+        if self._conflicts is None:
+            self._conflicts = find_conflicts(self.store, Conflict, Source)
+        return self._conflicts
 
 
 def build():

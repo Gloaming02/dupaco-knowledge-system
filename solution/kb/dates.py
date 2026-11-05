@@ -53,3 +53,19 @@ def page_date(markdown: str) -> Optional[str]:
         return p
     upd = sorted({d for x in UPDATED.finditer(markdown) if (d := _iso(x.groups()))})
     return upd[-1] if upd else None
+
+
+_ISO = r"(\d{4})-(\d{2})-(\d{2})"
+ENDED = re.compile(r"\b(?:offer\s+)?(?:ended|expired|ends|expires|valid (?:through|until)|available (?:through|until)|"
+                   r"through|until)\s+(?:on\s+)?(?:" + _MDY + "|" + _LONG + "|" + _ISO + ")", re.I)
+
+
+def end_dates(text: str) -> list[str]:
+    out = []
+    for x in ENDED.finditer(text):
+        g = x.groups()
+        if g[6]:
+            out.append(f"{g[6]}-{g[7]}-{g[8]}")
+        elif (d := _iso(g[:6])):
+            out.append(d)
+    return sorted(out)

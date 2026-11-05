@@ -13,18 +13,20 @@ NAMES = {RATE_SHEET: "rate sheet", PRODUCT: "product page", REFERENCE: "referenc
 
 _RATE_SHEETS = {"/rates", "/business-rates"}
 _PRODUCT_PREFIXES = ("/personal/", "/business/", "/savings-account/", "/checking", "/contact",
-                     "/about/join", "/locations")
-_MARKETING = re.compile(r"^/(calculators|business-calculators)(/|$)|-lp$|^/(switch-and-earn|earn-more|"
-                        r"21-day-sprint|checking-offer)")
-_EDITORIAL = re.compile(r"^/(learn|newsroom|business/resources|resources|dupacodaily|20\d\d)(/|$)")
+                     "/about/join", "/locations", "/loans", "/savings", "/accounts", "/cards", "/fees")
+_MARKETING = re.compile(r"^/(calculators?|business-calculators|promos?|offers?|specials?|campaigns?)(/|$)|-lp$|"
+                        r"^/(switch-and-earn|earn-more|21-day-sprint|checking-offer)")
+_EDITORIAL = re.compile(r"^/(learn|newsroom|news|blog|press|business/resources|resources|dupacodaily|20\d\d)(/|$)")
+_LEGACY_HOST = re.compile(r"^(info|old|legacy|archive)\.")
 
 
 def tier(url: str) -> int:
     key = url_key(url)
-    if not key.startswith("dupaco.com"):
+    host = key.split("/", 1)[0]
+    if _LEGACY_HOST.match(host):
         return LEGACY                      # info.dupaco.com and other old subdomains
     path = path_of(url)
-    if path in _RATE_SHEETS:
+    if path in _RATE_SHEETS or re.search(r"(^|/)rates(/|$)|-rates$", path):
         return RATE_SHEET
     if _MARKETING.search(path):
         return MARKETING

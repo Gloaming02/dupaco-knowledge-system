@@ -27,7 +27,17 @@ def _num(s: str) -> float:
     return float(s.replace(",", ""))
 
 
+NUMBER_WORDS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+    "sixteen seventeen eighteen nineteen twenty".split())}
+NUMBER_WORDS.update({"thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80,
+                     "twenty-four": 24, "thirty-six": 36, "forty-eight": 48, "seventy-two": 72,
+                     "eighty-four": 84, "eighteen": 18})
+_NUMW = re.compile(r"\b(" + "|".join(sorted(NUMBER_WORDS, key=len, reverse=True)) + r")(?=[\s-]+(?:months?|years?|yrs?|mos?)\b)", re.I)
+
+
 def term_months(text: str) -> Optional[int]:
+    text = _NUMW.sub(lambda m: str(NUMBER_WORDS[m.group(1).lower()]), text)
     m = TERM.search(text)
     if not m:
         return None
@@ -107,8 +117,46 @@ def _display(cell: str) -> str:
     return " – ".join(f"{v}%" for v in vals[:2])
 
 
+PROSE = re.compile(r"^\s*[-*]?\s*(?P<label>[A-Za-z0-9][^:%\n]{3,80}?)\s*(?::|\b(?:is|of|at)\b|(?=\b(?:APY|APR)\b))\s*"
+                   r"(?:(?P<metric>APY|APR|dividend rate|rate)\s*:?\s*)?(?P<value>\d{1,2}(?:\.\d{1,3})?\s*%)"
+                   r"(?P<rest>[^\n]{0,80})$", re.I | re.M)
+
+
+def _prose_facts(page) -> list:
+    """Short 'label: 3.50%' lines outside tables. Only on non-editorial pages: blog prose
+    is full of incidental percentages."""
+    from . import authority
+    if page.tier <= authority.EDITORIAL:
+        return []
+    out, heading = [], page.title
+    for line in page.markdown.splitlines():
+        if line.lstrip().startswith("#"):
+            heading = line.lstrip("# ").strip()
+            continue
+        if line.lstrip().startswith("|") or len(line) > 200:
+            continue
+        m = PROSE.match(line)
+        if not m:
+            continue
+        label = m.group("label").strip(" -*")
+        metric_word = (m.group("metric") or "") + " " + label
+        is_loan = bool(LOAN_WORDS.search(f"{heading} {label}"))
+        f = RateFact(page=page, section=heading, name=label, cells=[label, m.group("value")], is_loan=is_loan,
+                     text=f"{heading}: {line.strip()}")
+        f.values[_metric(metric_word, m.group("value") + " " + (m.group("metric") or ""), is_loan)] = _display(m.group("value"))
+        f.term = term_months(label)
+        f.years = year_band(label)
+        f.amount = amount_band(label + " " + (m.group("rest") or ""))
+        low = f"{heading} {label}".lower()
+        f.flags = frozenset(w for w in ("jumbo", "special", "refinance", "variable", "fixed", "heloc") if w in low)
+        if re.search(r"\bbusiness\b", low) or "/business" in page.url:
+            f.audience = "business"
+        out.append(f)
+    return out
+
+
 def extract(page) -> list[RateFact]:
-    out = []
+    out = _prose_facts(page)
     for b in iter_blocks(page.markdown, page.title):
         if b[0] != "row":
             continue
@@ -130,6 +178,8 @@ def extract(page) -> list[RateFact]:
                 "traditional" if name.lower().startswith("traditional") else None)
         f.flags = frozenset(w for w in ("jumbo", "special", "refinance", "variable", "fixed", "heloc")
                             if w in whole.split("http")[0])
+        if re.search(r"introductory|intro\b|promo|balance transfer", name, re.I):
+            f.flags = f.flags | {"intro"}
         for h, c in zip(header, cells):
             hl = h.lower()
             if PCT.search(c) and "payment" not in hl:
