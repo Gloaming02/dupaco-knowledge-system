@@ -5,7 +5,7 @@ from collections import Counter, defaultdict
 from .text import tokens
 
 K1, B = 1.2, 0.6
-TIER_BOOST = 0.12          # each authority tier adds 12% to a passage's score
+TIER_BOOST = 0.15          # each authority tier adds 15% to a passage's score
 
 
 class SnapshotIndex:
@@ -30,7 +30,10 @@ class SnapshotIndex:
 
     def df(self, word: str) -> float:
         """Share of passages containing `word` (unstemmed)."""
-        return len(self.postings.get(word.lower(), ())) / max(1, len(self.docs))
+        toks = tokens(word)
+        if not toks:
+            return 1.0          # a stop word: treat as common
+        return min(len(self.postings.get(t, ())) for t in toks) / max(1, len(self.docs))
 
     def search(self, query: str, k: int = 10):
         scores = defaultdict(float)
@@ -42,4 +45,22 @@ class SnapshotIndex:
                 scores[d] += idf * tf * (K1 + 1) / (tf + K1 * (1 - B + B * self.lens[d] / self.avg))
         ranked = sorted(((s * (1 + TIER_BOOST * self.docs[d][0].tier), d) for d, s in scores.items()),
                         key=lambda x: (-x[0], x[1]))
-        return [(s, self.docs[d][0], self.docs[d][1]) for s, d in ranked[:k]]
+        hits = [(s, self.docs[d][0], self.docs[d][1]) for s, d in ranked[:k]]
+        return prefer_newest_article(hits)
+
+
+def prefer_newest_article(hits, window: float = 0.85):
+    """Rule R3 for editorial pages: when several *articles* answer about equally well, the most
+    recently published one wins ("fifth time Forbes recognized" beats "fourth time").
+    Works at page level: each page's best passage competes."""
+    if not hits:
+        return hits
+    best_per_page = {}
+    for h in hits:
+        best_per_page.setdefault(h[1].key, h)
+    top = hits[0][0]
+    close = [h for h in best_per_page.values() if h[0] >= window * top]
+    if len(close) > 1 and all(h[1].tier <= 1 for h in close):
+        win = max(close, key=lambda h: (h[1].printed_date or "", h[0]))
+        hits = [h for h in hits if h[1].key == win[1].key] + [h for h in hits if h[1].key != win[1].key]
+    return hits
