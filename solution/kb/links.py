@@ -22,9 +22,18 @@ def canonical(url: str) -> str:
     return f"{p.scheme}://{p.netloc}{p.path.rstrip('/') or '/'}{frag}"
 
 
+def _domain(host: str) -> str:
+    parts = host.lower().split(":")[0].split(".")
+    return ".".join(parts[-2:])
+
+
 class LinkBook:
     def __init__(self, view):
         self.view = view
+        hosts = defaultdict(int)
+        for p in view.pages.values():
+            hosts[_domain(urlparse(p.url).netloc)] += 1
+        self.domain = max(hosts, key=hosts.get) if hosts else ""
         self.targets = defaultdict(lambda: {"anchors": defaultdict(int), "n": 0})
         for page in sorted(view.pages.values(), key=lambda p: p.key):
             for text, href in LINK.findall(page.markdown):
@@ -54,23 +63,39 @@ class LinkBook:
                 secs = {f.section.split(" / ")[-1] for f in page.facts}
                 for s in secs:                         # what the target page actually lists
                     words |= set(tokens(s))
-                core = qs - {"rate"}
+                core = {w for w in qs - {"rate"} if any(w in tokens(s) for s in secs)} or (qs - {"rate"})
                 if core and any(core <= set(tokens(s)) for s in secs):
                     lists_it = 0.2                     # the page carries that product's rate table
             hit = len(qs & words) / len(qs)
             if hit < 0.5:
                 continue
             host = path.netloc.lower()
-            alive = page is not None or host not in ("www.dupaco.com", "dupaco.com")
-            score = hit + lists_it + 0.05 * min(t["n"], 10) / 10 + (0.1 if alive else -0.5) - (0.5 if host.startswith("info.") else 0)
-            scored.append((score, -len(url), url))
+            own = _domain(host) == self.domain
+            main_host = host.removeprefix("www.") == self.domain
+            alive = page is not None or not main_host       # a main-site page missing from the crawl is dead
+            total = sum(t["anchors"].values())
+            # Share of the links to this target whose anchor text itself names what was asked.
+            anchor_share = sum(n for a, n in t["anchors"].items() if qs & set(tokens(a))) / max(1, total)
+            action = 0.0
+            if ACTION_Q.search(question):
+                # "join online" wants the application, not the page about joining.
+                action = 0.3 * sum(n for a, n in t["anchors"].items() if ACTION_ANCHOR.match(a)) / max(1, total)
+            score = (hit + lists_it + 0.2 * anchor_share + action + 0.05 * min(t["n"], 10) / 10
+                     + (0.1 if alive else -0.5) - (0.5 if LEGACY_HOST.match(host) else 0))
+            scored.append((score, -len(url), url, own))
         if not scored:
             return None
+        if any(o for *_, o in scored):
+            scored = [x for x in scored if x[3]]          # never send members off the site's own domain
         scored.sort(reverse=True)
-        return scored[0][2]
+        return [u for s, _, u, _ in scored[:2] if s >= scored[0][0] - 0.1]
 
 
+LEGACY_HOST = re.compile(r"^(info|old|legacy|archive)\.")
+ACTION_Q = re.compile(r"\b(apply|sign up|enroll|open an? (?:account|membership)|join|become a member)\b", re.I)
+ACTION_ANCHOR = re.compile(r"(become|apply|open|start|join|sign up|enroll|get started|continue my application)\b", re.I)
 SYN_MAP = {"cd": "certificate", "cds": "certificates", "mortgage": "home loan", "atm": "atm"}
 SYN = re.compile(r"\b(cds?|mortgage)\b", re.I)
 INTENT_WORDS = {"link", "url", "website", "web", "page", "webpage", "address", "online", "site", "use",
-                "see", "find", "go", "should", "where", "which"}
+                "see", "find", "go", "should", "where", "which", "show", "shows", "view", "check",
+                "can", "could", "do", "does", "get", "there", "is", "are", "the", "my", "your", "dupaco"}

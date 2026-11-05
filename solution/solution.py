@@ -125,6 +125,20 @@ class KnowledgeSystem:
         if not hits:
             return Answer(text=REFUSAL, confident=False)
         top, page, passage = hits[0]
+        # Relevance floor: the winning page must cover most of what was asked, otherwise this is
+        # off-topic (or not answerable from the site) and a random passage would be a guess.
+        from kb.text import tokens as _tok
+        idx = self.indexes[view.snapshot_id]
+        qtok = set(_tok(question))
+        if qtok:
+            ptok = set(_tok(page.title + " " + " ".join(page.chunks)))
+            unknown = max(idx.idf.values()) if idx.idf else 1.0
+            w = {t: idx.idf.get(t, unknown) for t in qtok}
+            # IDF-weighted, deliberately low: lexical overlap cannot tell chit-chat from real
+            # questions, so this only catches clearly unrelated input (other languages, gibberish).
+            if sum(w[t] for t in qtok & ptok) / sum(w.values()) < 0.3:
+                return Answer(text=REFUSAL, confident=False,
+                              conflict_note="No page on the site covers most of this question.")
         # Widen to the neighbouring paragraphs under the same heading (lists, follow-on sentences).
         passage = self._with_neighbours(page, passage)
         # Answer from one page only (its best two passages), so no other page's numbers leak in.
@@ -162,12 +176,11 @@ class KnowledgeSystem:
     def _link(self, q, view):
         if not LINK_INTENT.search(q) or not re.search(r"\b(link|url|website|web ?page|online|site)\b", q, re.I):
             return None
-        if not re.search(r"\b(link|url|which|what|where|how)\b", q, re.I):
+        urls = self.linkbooks[view.snapshot_id].best(q)
+        if not urls:
             return None
-        url = self.linkbooks[view.snapshot_id].best(q)
-        if not url:
-            return None
-        return Answer(text=f"You can use {url}", sources=[Source(url=url, snapshot_id=view.snapshot_id)])
+        text = f"You can use {urls[0]}" + (f" (see also {urls[1]})" if len(urls) > 1 else "")
+        return Answer(text=text, sources=[Source(url=u, snapshot_id=view.snapshot_id) for u in urls])
 
     BRANCH_NAME = re.compile(r"\b((?:[A-Z][\w'.&-]*\s+){1,3})[Bb]ranch\b")
 
@@ -178,10 +191,13 @@ class KnowledgeSystem:
         name = " ".join(w for w in m.group(1).split() if w.lower() not in {"the", "dupaco", "dupaco's", "your", "what", "is"})
         return name or None
 
+    HOURS_Q = re.compile(r"\bhours?\b|\b(lobby|lobbies|drive[- ]?up|drive[- ]?thru)\b.*\b(open|close|closes|time)\b|"
+                         r"\b(open|close|closes)\b.*\b(lobby|lobbies|drive[- ]?up)\b|what time .*\b(open|close)\b", re.I)
+
     def _hours(self, q, view):
-        if not re.search(r"\bhours?\b", q, re.I):
-            return None
         name = self._named_branch(q)
+        if not self.HOURS_Q.search(q) and not (name and re.search(r"\bwhen\b.*\bopen\b", q, re.I)):
+            return None
         if name:
             # Hours for one branch are only trusted from a page that names that branch.
             for page in sorted(view.pages.values(), key=lambda p: (-p.tier, p.key)):
@@ -189,6 +205,10 @@ class KnowledgeSystem:
                     blocks = directory.hours_blocks(page)
                     text = f"{name} branch hours: " + " ".join(f"{k.title()}: {s}." for k, s in blocks)
                     return Answer(text=text, sources=self._src(page))
+            # No posted hours. If the site announces that this branch closed, say that instead.
+            for s, p, c in self.indexes[view.snapshot_id].search(f"{name} branch close closing closed", k=10):
+                if name.lower() in c.lower() and re.search(r"\bclos(e|ed|ing|ure)\b", c, re.I):
+                    return Answer(text=self._with_neighbours(p, c), sources=self._src(p, c[:200]))
             return Answer(text=f"I couldn't find posted hours for a {name} branch on Dupaco's website, so I "
                                f"don't want to guess. Please contact Dupaco or use the branch locator.",
                           confident=False)
@@ -243,6 +263,9 @@ class KnowledgeSystem:
         if not m:
             return None
         place = m.group(1).strip().rstrip("?.!")
+        if re.match(r"(january|february|march|april|may|june|july|august|september|october|november|december|"
+                    r"today|now|\d)", place, re.I):
+            return None
         page, entries = self._locator(view)
         hits = [e for e in entries if "atm" not in e["kind"].lower() and place.lower() in
                 f"{e['city']} {e['street']}".lower()]
@@ -258,9 +281,13 @@ class KnowledgeSystem:
     PHONE_Q = re.compile(r"\b(phone|call|telephone|contact number)\b", re.I)
     PHONE = re.compile(r"\b(?:1[-. ])?(\d{3})[-. ](\d{3})[-. ](\d{4})\b")
 
+    UPDATE_Q = re.compile(r"\b(update|change|correct)\b.*\b(contact|address|phone|email|e-mail|name|information|info|details)\b", re.I)
+
     def _phone(self, q, view):
         """The main phone number = the toll-free number most repeated on non-editorial pages."""
-        if not self.PHONE_Q.search(q) or re.search(r"\b(lost|stolen|fraud|branch|after hours|routing)\b", q, re.I):
+        update = bool(self.UPDATE_Q.search(q))
+        if not update and (not self.PHONE_Q.search(q) or
+                           re.search(r"\b(lost|stolen|fraud|branch|after hours|routing)\b", q, re.I)):
             return None
         from collections import Counter
         c = Counter()
@@ -271,6 +298,9 @@ class KnowledgeSystem:
             return None
         num = sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
         page = next(p for p in sorted(view.pages.values(), key=lambda p: (-p.tier, p.key)) if num in p.markdown)
+        if update:
+            return Answer(text=f"Sign in to online/mobile banking, or call Dupaco at {num}, to update your "
+                               f"contact information.", sources=self._src(page))
         return Answer(text=f"You can call Dupaco at {num}.", sources=self._src(page))
 
     STAT_Q = {

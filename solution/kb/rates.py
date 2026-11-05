@@ -38,7 +38,14 @@ how much get earn pay pays paying with between and or to in at month months year
 dupaco dupacos offer offers have account accounts loan loans balance standard purchase new
 s i about at any their there they them which who also like would want know need looking
 wondering tell show list all some much many kind kinds type types option options available
-offered right latest aprs apys charge charges provide""".split())
+offered right latest aprs apys charge charges provide
+if then than so but not no yes keep kept put get got gets do did done does doing be been being am
+was were will would should could may might must shall it its this that these those here there
+when where who whom whose why how what which while during before after above below up down out
+over under again further once only own same too very just also each few more most other some such
+any both all nor into onto through from by about against between among per via my mine we us our
+ours he she him her his hers they them their theirs i me you your yours one ones thing things
+""".split())
 HEAD = re.compile(r"\b([a-z]+)(?:[\s-]+rate)?[\s-]+(?:loans?|mortgages?|accounts?|cards?|certificates?|lines? of credit)\b")
 LISTING = re.compile(r"\b(offer|offers|options|all|types|kinds|list|cards|loans|accounts|certificates)\b", re.I)
 AUDIENCE_WORDS = {"business", "roth", "traditional", "ira", "personal"}
@@ -81,13 +88,15 @@ def parse(question: str) -> Optional[RateQuery]:
         q = rx.sub(rep, q)
     if not RATE_INTENT.search(q) or NOT_RATE.search(q):
         return None
-    raw = [w for w in WORD.findall(q) if _stem(w) not in GENERIC and w not in GENERIC]
+    # Audience words are a separate filter (rule R4), not part of the product name.
+    raw = [w for w in WORD.findall(q) if _stem(w) not in GENERIC and w not in GENERIC
+           and (w not in AUDIENCE_WORDS or w == "personal") and w not in ("iras", "retirement")]
     rq = RateQuery(product=[_stem(w) for w in raw])
     rq.modifiers = [m.group(1) for m in HEAD.finditer(q) if m.group(1) not in GENERIC]
     rq.listing = bool(LISTING.search(q)) or bool(re.search(r"\b(rates|apys|aprs)\b", q))
     rq.term = term_months(q)
     rq.asks_number = bool(re.search(r"\b(rates?|apys?|aprs?|interest rates?|dividend rates?)\b", q)) and not re.search(r"\b(any|which)\b", q)
-    if re.search(r"\b(car|auto|vehicle|model|truck|motorcycle)", q) and (m := re.search(r"\b(19[89]\d|20[0-3]\d)\b", q)):
+    if re.search(r"\b(car|auto|vehicle|model|truck|motorcycle)", q) and (m := re.search(r"\b(1[89]\d\d|20[0-3]\d)\b", q)):
         rq.year = int(m.group(1))
     if (m := MONEY_RANGE.search(q)) or (m := re.search(r"\$\s?(\d[\d,]*)\s*(?:and|-|to)\s*\$?\s?(\d[\d,]*)", q)):
         rq.amount = (float(m.group(1).replace(",", "")), float(m.group(2).replace(",", "")))
@@ -193,7 +202,9 @@ class RateBook:
             k = (f.audience, label)
             by_sec[k] = max(by_sec.get(k, -1), s - 0.01 * extra)   # tightest product label wins ties
         best = max(by_sec.values())
-        keep = {k for k, s in by_sec.items() if s >= best - 0.005}
+        # Sections within a small margin compete on authority (R2); the extra-word tie-break
+        # only chooses between sections of the winning page.
+        keep = {k for k, s in by_sec.items() if s >= best - 0.05}
         top = [f for s, f in scored if (f.audience, f.section.split(" / ")[-1].lower()) in keep
                and s >= best - 0.005 - 0.01 * 9]
         # Prefer the plain product over variants the question did not ask for (jumbo, refinance…).
@@ -204,7 +215,8 @@ class RateBook:
         def rank(f):
             return (not f.page.carried, f.page.tier, f.page.printed_date or "", f.page.key)
         win = max(top, key=rank)
-        win_sec = win.section.split(" / ")[-1].lower()
+        on_page = {(f.audience, f.section.split(" / ")[-1].lower()) for f in top if f.page is win.page}
+        win_sec = max(on_page, key=lambda k: (by_sec[k], k))[1]
         if rq.listing:
             # One winning page per audience (personal first), every matching product on it.
             rows = []
@@ -212,7 +224,10 @@ class RateBook:
                 group = [f for f in top if f.audience == aud]
                 if group:
                     p = max(group, key=rank).page
-                    rows += [f for f in group if f.page is p]
+                    secs = {(f.audience, f.section.split(" / ")[-1].lower()) for f in group if f.page is p}
+                    best_here = max(by_sec[k] for k in secs)
+                    rows += [f for f in group if f.page is p and
+                             by_sec[(f.audience, f.section.split(" / ")[-1].lower())] >= best_here - 0.005]
         else:
             rows = [f for f in top if f.page is win.page and f.section.split(" / ")[-1].lower() == win_sec]
         if rq.superlative and rows:

@@ -21,6 +21,7 @@ MONEY_RANGE = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*(?:[-–]|to)\s*\$?\s?(\d
 MONEY_ONE = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*(\+|or less|or more|and up)?", re.I)
 LOAN_WORDS = re.compile(r"loan|mortgage|apr|visa|card|heloc|equity|line of credit|refinance", re.I)
 FOOTNOTE = re.compile(r"%\d+")
+PRODUCT_NOUN = re.compile(r"certificate|\bcds?\b|savings|checking|money market|\bira|loan|visa|card|mortgage|club", re.I)
 
 
 def _num(s: str) -> float:
@@ -196,5 +197,10 @@ def extract(page) -> list[RateFact]:
             elif f.amount is None and "min" in hl and (m := MONEY_ONE.search(c)):
                 f.amount = (_num(m.group(1)), INF)
         if f.values:
+            # A deposit row priced by term ("60 Month" under a bare "Regular" caption) is a
+            # certificate even when the table never says so (older snapshots of /rates).
+            if (not f.is_loan and f.term
+                    and not re.search(r"certificate|\bcds?\b|savings|checking|money market|club", f"{f.section} {f.name}", re.I)):
+                f.section = f"{f.section} Certificates"
             out.append(f)
     return out

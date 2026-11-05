@@ -91,8 +91,17 @@ boilerplate conflict is reported too.
 ## Testing
 
 - `python harness/run_eval.py --submission solution --eval eval/public_eval.jsonl` gives final
-  0.84 (qa 0.84, consistency 1.00, speed 1.00, 0 stale-value hits). No conflict gold is shipped
+  0.88 (qa 0.88, consistency 1.00, speed 1.00, 0 stale-value hits). No conflict gold is shipped
   for the public set.
+- **Stress tests** (`tests/`), written because the hidden set is larger and reworded:
+  - `paraphrase_eval.jsonl`: two rewordings of every public question, grouped with the
+    original. qa 0.91, paraphrase consistency 0.90, 0 stale hits.
+  - `fact_sweep.py`: one generated question for **every rate-sheet row in every snapshot**
+    (663 questions, each asked with that snapshot's `as_of`). 100% contain the right value, and
+    0 contain another snapshot's value for the same row.
+  - `load_test.py`: 1,500 uncached questions give p95 25 ms. 144 odd input combinations (empty,
+    5,000 chars, emoji, SQL, other languages, bad dates, non-strings) raise 0 errors. Ingest
+    takes about 5 s and about 300 MB.
 - `scripts/eval.sh solution selftest` runs the kit's synthetic site, where qa, conflict F1 and
   resolution are all 1.00. That site uses different URLs and prose-style rates, which is how
   we check the rules aren't Dupaco-specific.
@@ -106,5 +115,9 @@ boilerplate conflict is reported too.
   without changing which fact wins. I left it out to keep the system key-free and deterministic.
 - Yes/no questions about a specific number ("does any tier pay 0.35%?") are not specially
   handled.
+- Off-topic chit-chat ("tell me a joke") can still get a passage back. Lexical overlap can't
+  separate it from real but conversational questions, so the relevance floor is deliberately
+  low and only catches clearly unrelated input. An intent classifier (or an LLM gate) would be
+  the right fix.
 - The URL authority tiers are patterns, not a learned model. A new site section needs a
   pattern if it should rank above "reference".
