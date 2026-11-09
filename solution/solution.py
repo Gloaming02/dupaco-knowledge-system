@@ -51,6 +51,7 @@ import re  # noqa: E402
 from kb import directory, rates  # noqa: E402
 from kb.links import INTENT as LINK_INTENT, LinkBook  # noqa: E402
 from kb.conflicts import find as find_conflicts  # noqa: E402
+from kb.dates import as_of_date  # noqa: E402
 from kb.index import SnapshotIndex  # noqa: E402
 from kb.store import Store  # noqa: E402
 
@@ -77,9 +78,12 @@ class KnowledgeSystem:
         view = self.store.add(snapshot)
         self._conflicts = None
         self.indexes[view.snapshot_id] = SnapshotIndex(view, self._tokens)
+        # Blog, newsroom and legacy pages are never evidence for a rate (rule R6).
+        pages = sorted(view.pages.values(), key=lambda p: p.key)
         self.ratebooks[view.snapshot_id] = rates.RateBook(
-            [f for p in sorted(view.pages.values(), key=lambda p: p.key) for f in p.facts],
-            site_df=self.indexes[view.snapshot_id].df)
+            [f for p in pages if p.tier >= 2 for f in p.facts],
+            site_df=self.indexes[view.snapshot_id].df,
+            withdrawn=[f for p in pages for f in p.stale_facts])
         self.linkbooks[view.snapshot_id] = LinkBook(view)
 
     def answer(self, question, as_of=None):
@@ -96,7 +100,13 @@ class KnowledgeSystem:
                 self._cache[key] = self._answer(question, view)
             except Exception as e:      # never crash the scorer; an honest refusal beats an error
                 self._cache[key] = Answer(text=REFUSAL, confident=False, conflict_note=f"internal error: {e!r}")
-        return self._cache[key]
+        ans = self._cache[key]
+        day = as_of_date(as_of)
+        if day and day < view.taken_on:           # rule R1: asked about a time before the first crawl
+            early = f"No snapshot exists on or before {day}; answered from the earliest one ({view.taken_on})."
+            ans = Answer(text=ans.text, sources=ans.sources, confident=ans.confident,
+                         conflict_note=f"{ans.conflict_note} {early}" if ans.conflict_note else early)
+        return ans
 
     def _answer(self, question, view):
         for route in (self._link, self._hours, self._address, self._branch_in, self._phone, self._stats):
@@ -243,16 +253,24 @@ class KnowledgeSystem:
         text = f"You can use {urls[0]}" + (f" (see also {urls[1]})" if len(urls) > 1 else "")
         return Answer(text=text, sources=[Source(url=u, snapshot_id=view.snapshot_id) for u in urls])
 
-    BRANCH_NAME = re.compile(r"\b((?:[A-Z][\w'.&-]*\s+){1,3})[Bb]ranch\b")
+    BRANCH_NAME = re.compile(r"\b((?:[\w'.&-]+\s+){1,3})branch\b", re.I)
+    NOT_A_NAME = set("""a an the dupaco dupaco's your my our what which is are for at of in to on and or do does
+        hours lobby drive up open close closes closed when where address phone nearest closest local any
+        each every this that new main one other another same different""".split())
 
     def _named_branch(self, q):
+        """'the Mullan Avenue branch' -> 'Mullan Avenue' (any capitalisation); None for 'your branch'."""
         m = self.BRANCH_NAME.search(q)
         if not m:
             return None
-        name = " ".join(w for w in m.group(1).split() if w.lower() not in {"the", "dupaco", "dupaco's", "your", "what", "is"})
-        return name or None
+        words = m.group(1).split()
+        while words and words[0].lower() in self.NOT_A_NAME:
+            words.pop(0)
+        if not words or any(w.lower() in self.NOT_A_NAME for w in words):
+            return None
+        return " ".join(w if w[:1].isupper() else w.title() for w in words)
 
-    HOURS_Q = re.compile(r"\bhours?\b|\b(lobby|lobbies|drive[- ]?up|drive[- ]?thru)\b.*\b(open|close|closes|time)\b|"
+    HOURS_Q = re.compile(r"\bhours?\b|\bopen (?:on )?(?:(?:mon|tues|wednes|thurs|fri|satur|sun)days?|weekends?)\b|\b(lobby|lobbies|drive[- ]?up|drive[- ]?thru)\b.*\b(open|close|closes|time)\b|"
                          r"\b(open|close|closes)\b.*\b(lobby|lobbies|drive[- ]?up)\b|what time .*\b(open|close)\b", re.I)
 
     def _hours(self, q, view):
@@ -268,7 +286,9 @@ class KnowledgeSystem:
                     return Answer(text=text, sources=self._src(page))
             # No posted hours. If the site announces that this branch closed, say that instead.
             for s, p, c in self.indexes[view.snapshot_id].search(f"{name} branch close closing closed", k=10):
-                if name.lower() in c.lower() and re.search(r"\bclos(e|ed|ing|ure)\b", c, re.I):
+                # The passage must name this branch ("Hy-Vee branch"), not merely a street it mentions.
+                if re.search(rf"\b{re.escape(name)}\s+(?:branch|location|office)\b", c, re.I) \
+                        and re.search(r"\bclos(e|ed|ing|ure)\b", c, re.I):
                     return Answer(text=self._with_neighbours(p, c), sources=self._src(p, c[:200]))
             return Answer(text=f"I couldn't find posted hours for a {name} branch on Dupaco's website, so I "
                                f"don't want to guess. Please contact Dupaco or use the branch locator.",
@@ -365,9 +385,12 @@ class KnowledgeSystem:
         return Answer(text=f"You can call Dupaco at {num}.", sources=self._src(page))
 
     STAT_Q = {
-        "branches": re.compile(r"how many (?:branch(?:es)?|branch offices|locations|offices)\b(?!.*\b(?:close|closed|open(?:ed)?)\b)", re.I),
-        "members": re.compile(r"how many members\b|\bmember(?:ship)? (?:count|size)\b", re.I),
-        "employees": re.compile(r"how many (?:employees|people work|staff)\b(?! (?:used|volunteer|served|took))", re.I),
+        "branches": re.compile(r"(?:how many|number of) (?:\w+ ){0,2}(?:branch(?:es)?|locations|offices)\b"
+                               r"(?!.*\b(?:close|closed|open(?:ed)?)\b)", re.I),
+        "members": re.compile(r"(?:how many|number of) (?:\w+ ){0,2}members\b|how many people (?:belong|bank|are members)\b|"
+                              r"\bmember(?:ship)? (?:count|size)\b", re.I),
+        "employees": re.compile(r"(?:how many|number of) (?:\w+ ){0,2}(?:employees|people work|staff)\b"
+                                r"(?! (?:used|volunteer|served|took))", re.I),
         "assets": re.compile(r"\b(?:total )?assets\b|how (?:big|large) is", re.I),
     }
     STAT_TEXT = {"branches": "{v} branch office locations", "members": "more than {v} members",

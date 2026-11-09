@@ -23,8 +23,9 @@ The scorer unpacks the zips into `snapshots/` the first time it runs. Other tool
 - `scripts/eval.sh` runs the public eval. `scripts/eval.sh solution selftest` runs the kit's
   synthetic site, including conflict scoring.
 - `scripts/probe.py` asks our own questions, the ones outside the public set.
-- `tests/` holds the stress tests: a paraphrase set, a generated sweep over every rate row in every
-  snapshot, and a load and odd-input test (see NOTES).
+- `python -m unittest discover tests` runs the regression tests. `tests/` also holds a paraphrase
+  set, a generated sweep over every rate row in every snapshot, and a load and odd-input test
+  (see NOTES).
 - `scripts/explore.py` browses the snapshots (`grep`, `history`, `diff`).
 
 Results: public eval 0.89 (accuracy 0.89, consistency 1.00, speed 1.00, no stale values), and

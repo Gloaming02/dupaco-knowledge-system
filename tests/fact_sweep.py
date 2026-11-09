@@ -88,6 +88,7 @@ def main():
     print(f"value found: {stats['value_found'] / stats['asked']:.1%}   stale hits: {stats['stale_hit']}")
     for f in fails[:25]:
         print("  ", f)
+    sys.exit(1 if fails else 0)
 
 
 if __name__ == "__main__":

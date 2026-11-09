@@ -22,14 +22,15 @@ The full rules are in [`docs/RULES.md`](../docs/RULES.md), each with the real ca
 The short version:
 
 1. **Time first (R1).** No `as_of` means the latest snapshot. With `as_of=D`, use the newest
-   snapshot taken on or before D. Only that snapshot is evidence for the answer.
+   snapshot taken on or before D. Only that snapshot is evidence for the answer. `as_of` may
+   be an ISO date, a timestamp or a month ("May 2026"); a date before the first snapshot is
+   answered from the first one and flagged in `conflict_note`.
 2. **Authority (R2).** Page tier comes from URL patterns: rate sheet (`/rates`) > product page >
    reference page > calculator/landing/promo > blog/newsroom > legacy subdomain (`info.`).
    The newsroom is still valid for events no other page covers (a branch closure).
 3. **Printed date, never crawl date (R3).** Every page is re-fetched on every crawl, so
    `fetched_at` says nothing about freshness. "Effective as of", then publish date, then
-   "updated" break ties within a tier. Among equally relevant articles, the newest wins (the
-   "fifth time Forbes recognized" release beats the "fourth time" one).
+   "updated" break ties within a tier. Among equally relevant articles, the newest wins.
 4. **Company stats (R3b).** Press releases end with an "About Dupaco" paragraph that repeats
    whatever the counts were at the time. For branch, member and employee counts we use the
    paragraph with the **largest member count**, because membership only grows. A majority vote
@@ -39,7 +40,8 @@ The short version:
    facts, never conflicts. Cell contents beat headers: the vehicle calculator labels an APR
    column "Annual Percentage Yield".
 6. **Expired is expired (R5).** A page that says its offer ended before the snapshot date
-   is excluded from answers (its values are still reported as conflicts).
+   is excluded from answers (its values are still reported as conflicts). So is a row the
+   rate sheet used to list and dropped, when another page still shows it (Mortgage Rate Relief).
 7. **Missing pages.** A page absent from a crawl is carried forward from the previous
    snapshot, but any page actually present in the crawl outranks it.
 8. **Honest refusal (R6).** The system refuses with `confident=False` and no digits in the text
@@ -102,25 +104,43 @@ boilerplate conflict is reported too.
 ## Testing
 
 - `python harness/run_eval.py --submission solution --eval eval/public_eval.jsonl` gives final
-  0.89 (qa 0.89, consistency 1.00, speed 1.00, 0 stale-value hits). No conflict gold is shipped
+  0.89 (qa 0.89, consistency 1.00, speed 1.00, 0 stale-value hits). The four misses are listed
+  under the paraphrase set below. No conflict gold is shipped
   for the public set.
 - **Stress tests** (`tests/`), written because the hidden set is larger and reworded:
-  - `paraphrase_eval.jsonl`: two rewordings of every public question, grouped with the
-    original. qa 0.93, paraphrase consistency 0.90, 0 stale hits.
+  - `test_regressions.py` (`python -m unittest discover tests`): 20 asserting tests, one per
+    wrong answer found in review: wrong tier, wrong snapshot, a withdrawn offer, a missing
+    refusal, merged conflicts. The synthetic-site tests run from a bare clone.
+  - `paraphrase_eval.jsonl`: two rewordings of each of the 40 public questions, grouped with
+    the original (120 items). qa 0.88, paraphrase consistency 0.87, 0 stale hits. The misses
+    are the four free-text questions the public eval also misses, in all three wordings
+    (Forbes, membership eligibility, Volunteer Time Off, and dup-005, which has no
+    `must_include` and can only be scored by the LLM judge), plus one reworded join link.
   - `fact_sweep.py`: one generated question for **every rate-sheet row in every snapshot**
     (663 questions, each asked with that snapshot's `as_of`). 100% contain the right value, and
-    0 contain another snapshot's value for the same row.
+    0 contain another snapshot's value for the same row. The questions are built from the
+    parser's own keys, so this checks lookup and `as_of` selection, not the table parser.
   - `load_test.py`: 1,500 uncached questions give p95 25 ms. 144 odd input combinations (empty,
     5,000 chars, emoji, SQL, other languages, bad dates, non-strings) raise 0 errors. Ingest
     takes about 5 s and about 300 MB.
 - `scripts/eval.sh solution selftest` runs the kit's synthetic site, where qa, conflict F1 and
-  resolution are all 1.00. That site uses different URLs and prose-style rates, which is how
-  we check the rules aren't Dupaco-specific.
+  resolution are all 1.00. That site uses different URLs and prose-style rates, so it
+  exercises the time, expiry and refusal rules on a second site. The URL authority patterns,
+  the product families in `conflicts.py`, the branch-locator path and the refusal wording are
+  written for this site.
 - `scripts/probe.py` holds our own questions outside the public set (other products, other
   terms, `as_of`, products the site doesn't offer). We used it to catch overfitting.
 
 ## Known limits / next steps
 
+- **Free text is the weak part.** Questions outside rates, hours, branches and company stats
+  get the best BM25 passage, and three public questions fail there: the Forbes answer comes
+  from the right article but not the sentence that says "fifth time", the eligibility question
+  lands on a loan page, and the Volunteer Time Off question takes the newer article's figure.
+  Fees, eligibility and news are not structured into facts the way rates are.
+- Question understanding is rules and word lists. Rewordings outside them fall through to
+  free text. Parsing the question into the fact key is the one step where a language model
+  (temperature 0, cached) would help most while leaving the choice of value to the rules.
 - Free-text answers are extractive (the best passage plus neighbours). An LLM could rewrite
   the *already chosen* passage into a cleaner sentence, constrained to the numbers it contains,
   without changing which fact wins. I left it out to keep the system key-free and deterministic.

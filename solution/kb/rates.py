@@ -27,7 +27,7 @@ NOT_RATE = re.compile(r"\b(link|url|website|web page|webpage|where can i (?:see|
 WORD = re.compile(r"[a-z]+")
 SYNONYMS = {
     "car": "auto", "cars": "auto", "vehicle": "auto", "vehicles": "auto", "automobile": "auto",
-    "truck": "auto", "motorcycle": "auto",
+    "truck": "auto", "motorcycle": "auto", "suv": "auto", "sedan": "auto", "pickup": "auto",
     "cd": "certificate", "cds": "certificate", "certificates": "certificate", "term": "certificate",
     "mortgages": "mortgage",
     "card": "visa", "cards": "visa", "credit": "visa",
@@ -51,11 +51,16 @@ ours he she him her his hers they them their theirs i me you your yours one ones
 HEAD = re.compile(r"\b([a-z]+)(?:[\s-]+rate)?[\s-]+(?:loans?|mortgages?|accounts?|cards?|certificates?|lines? of credit)\b")
 LISTING = re.compile(r"\b(offer|offers|options|all|types|kinds|list|cards|loans|accounts|certificates)\b", re.I)
 AUDIENCE_WORDS = {"business", "roth", "traditional", "ira", "personal"}
-VARIANTS = ("jumbo", "refinance", "variable", "heloc")
+VARIANTS = ("jumbo", "refinance", "variable", "heloc", "intro")
 SUPERLATIVE = {"highest": "highest", "best": "highest", "top": "highest", "most": "highest", "max": "highest",
                "maximum": "highest", "lowest": "lowest", "cheapest": "lowest", "least": "lowest",
                "min": "lowest", "minimum": "lowest"}
-NEW_VEHICLE = re.compile(r"\b(?:brand[- ])?new (?:model[- ]year )?(?:car|auto|automobile|vehicle|truck|motorcycle|suv)s?\b")
+VEHICLE = r"(?:car|auto|automobile|vehicle|truck|motorcycle|suv|sedan|pickup)s?"
+NEW_VEHICLE = re.compile(rf"\b(?:brand[- ])?new (?:model[- ]year )?{VEHICLE}\b")
+# A calendar date ("in May 2026", "as of 09/28/2026") is when, not a model year.
+DATED = re.compile(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:\d{1,2},?\s+)?(?:19|20)\d\d\b"
+                   r"|\b\d{1,2}/\d{1,2}/(?:19|20)\d\d\b|\b(?:in|of|since|during)\s+(?:19|20)\d\d\b")
+THOUSANDS = re.compile(r"\$?\s?(\d+(?:\.\d+)?)\s?k\b")
 
 
 HOME_LOAN = re.compile(r"\b(?:home|house) loans?\b")   # a mortgage; not home equity / home improvement
@@ -90,7 +95,9 @@ class RateQuery:
 PHRASES = [(re.compile(r"\bshare (certificates?)\b"), r"\1"),          # credit-union word for a CD
            (re.compile(r"\bcertificates? of deposits?\b"), "certificate"),
            (re.compile(r"\bterm[- ]share\b"), "certificate"),
-           (HOME_LOAN, "mortgage")]
+           (HOME_LOAN, "mortgage"),
+           (re.compile(r"\bhsas?\b"), "health savings account"),
+           (THOUSANDS, lambda m: f"${float(m.group(1)) * 1000:,.0f}")]     # "$15k" -> "$15,000"
 
 
 def parse(question: str) -> Optional[RateQuery]:
@@ -110,8 +117,12 @@ def parse(question: str) -> Optional[RateQuery]:
     rq.term = term_months(q)
     rq.asks_number = (by_term or bool(re.search(r"\b(rates?|apys?|aprs?|interest rates?|dividend rates?)\b", q))) \
         and not re.search(r"\b(any|which)\b", q)
-    if re.search(r"\b(car|auto|vehicle|model|truck|motorcycle)", q) and (m := re.search(r"\b(1[89]\d\d|20[0-3]\d)\b", q)):
+    # A year next to a loan or a vehicle is a model year ("a 2026 Honda Civic for 60 months").
+    if (m := re.search(r"\b(19[89]\d|20[0-3]\d)\b", DATED.sub(" ", q))) and \
+            (rq.term or re.search(rf"\b(?:{VEHICLE}|model|loans?|financ\w*)\b", q)):
         rq.year = int(m.group(1))
+        if "auto" not in rq.product and not re.search(r"\b(?:boat|rv|atv|snowmobile|home|mortgage)", q):
+            rq.product.append("auto")
     rq.newest = not rq.year and bool(NEW_VEHICLE.search(q))
     if (m := MONEY_RANGE.search(q)) or (m := re.search(r"\$\s?(\d[\d,]*)\s*(?:and|-|to)\s*\$?\s?(\d[\d,]*)", q)):
         rq.amount = (float(m.group(1).replace(",", "")), float(m.group(2).replace(",", "")))
@@ -129,7 +140,8 @@ def parse(question: str) -> Optional[RateQuery]:
     elif re.search(r"\b(ira|iras|roth|traditional|retirement)\b", q):
         rq.audience = "ira"
         rq.ira_kind = "roth" if "roth" in q else ("traditional" if "traditional" in q else None)
-    rq.variants = frozenset(v for v in VARIANTS if v in q or (v == "refinance" and "refi" in q))
+    rq.variants = frozenset(v for v in VARIANTS if v in q or (v == "refinance" and "refi" in q)
+                            or (v == "intro" and re.search(r"\bpromo|balance transfer", q)))
     rq.superlative = next((kind for w, kind in SUPERLATIVE.items() if re.search(rf"\b{w}\b", q)), None)
     return rq
 
@@ -160,7 +172,7 @@ class RateBook:
     `site_df(word)` gives the share of the snapshot's passages that use a word, which tells a
     product term ("construction", "adjustable") apart from filler ("was", "provide")."""
 
-    def __init__(self, facts: list, site_df=None):
+    def __init__(self, facts: list, site_df=None, withdrawn=()):
         self.facts = facts
         self.site_df = site_df or (lambda w: 0.0)
         df = Counter()
@@ -171,6 +183,11 @@ class RateBook:
             df.update(ws)
         n = max(1, len(facts))
         self.idf = {w: math.log(1 + n / c) for w, c in df.items()}
+        # Words of ended or withdrawn offers stay product words, so a question about one finds
+        # no current row and is declined rather than answered with the nearest live product.
+        for f in withdrawn:
+            for w in words(f"{f.section} {f.name}"):
+                self.idf.setdefault(w, math.log(1 + n))
         vals = sorted(self.idf.values())
         self._unknown = vals[len(vals) // 2] if vals else 1.0
 
@@ -227,6 +244,8 @@ class RateBook:
                and s >= best - 0.005 - 0.01 * 9]
         # Prefer the plain product over variants the question did not ask for (jumbo, refinance…).
         for v in VARIANTS:
+            if v == "jumbo" and rq.amount:
+                continue                  # "jumbo" is a balance tier: the amount decides (_narrow)
             if v not in rq.variants and any(v not in f.flags for f in top):
                 top = [f for f in top if v not in f.flags]
         # Rule R2 + R3: one page wins: highest authority, then newest printed date, then URL.
@@ -264,14 +283,17 @@ def _narrow(rows: list, rq: RateQuery) -> list:
         band = max((f.years for f in rows if f.years), key=lambda b: (b[1], b[0]))
         rows = [f for f in rows if f.years == band]
     if rq.amount:
-        # "$300,000 or less" and "$832,750 or less" both contain $250,000: the tightest band is the tier.
-        tightest = {}
+        # Several bands can contain the amount: "$300,000 or less" and "$832,750 or less" for
+        # $250,000, or a $1,000 minimum and a $100,000 jumbo minimum for $150,000. The tier is the
+        # narrowest band, and among open-ended minimums the highest one reached.
+        def tight(f):
+            return (f.amount[1] - f.amount[0], -f.amount[0])
+        best = {}
         for f in rows:
             if f.amount:
-                k = (f.section, f.term, f.years, f.flags)
-                tightest[k] = min(tightest.get(k, INF), f.amount[1] - f.amount[0])
-        rows = [f for f in rows if not f.amount
-                or f.amount[1] - f.amount[0] == tightest[(f.section, f.term, f.years, f.flags)]]
+                k = (f.section, f.term, f.years)
+                best[k] = min(best.get(k, (INF, 0)), tight(f))
+        rows = [f for f in rows if not f.amount or tight(f) == best[(f.section, f.term, f.years)]]
     return rows
 
 

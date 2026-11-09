@@ -140,6 +140,8 @@ def _prose_facts(page) -> list:
         if not m:
             continue
         label = m.group("label").strip(" -*")
+        if re.search(r"\bfees?\b", label, re.I):
+            continue
         metric_word = (m.group("metric") or "") + " " + label
         is_loan = bool(LOAN_WORDS.search(f"{heading} {label}"))
         f = RateFact(page=page, section=heading, name=label, cells=[label, m.group("value")], is_loan=is_loan,
@@ -162,8 +164,8 @@ def extract(page) -> list[RateFact]:
         if b[0] != "row":
             continue
         _, heading, label, header, cells = b
-        if not any(PCT.search(c) for c in cells):
-            continue
+        if not any(PCT.search(c) for c in cells) or re.search(r"\bfees?\b", cells[0], re.I):
+            continue                                   # a percentage fee row is not a rate
         header = list(header) + [""] * (len(cells) - len(header))
         section = " / ".join(x for x in (heading, label) if x)
         name = cells[0]

@@ -30,7 +30,8 @@ values. If any key field differs, they are two different facts.
 
 1. `as_of = None` → use the **latest** snapshot (05, 2026-09-28).
 2. `as_of = D` → use the **newest snapshot taken on or before D**.
-   If D is earlier than the first snapshot, use snapshot 01 and say so.
+   If D is earlier than the first snapshot, use snapshot 01 and say so in `conflict_note`.
+   `as_of` may be an ISO date or timestamp, `MM/DD/YYYY`, or a month ("May 2026" = end of May).
 3. Only the chosen snapshot is evidence for the answer. Older snapshots are used only to
    *explain* a change ("was 3.90%, now 4.00%") or to fill `conflicts()`, never as the
    answer itself.
@@ -111,8 +112,9 @@ Before comparing values, normalise the full fact key. These are **not** conflict
 - A promo or event with an end date before the answer date is **expired**. Say it ended,
   don't quote its rate as current. Hy-Vee branch closed **March 31, 2026**. Asked in
   October 2026, the answer is "closed on March 31, 2026" plus where to go instead.
-- A landing page (tier D) that still advertises an offer missing from the tier-A rate sheet is
-  treated as stale.
+- A row the rate sheet listed in an earlier snapshot and no longer lists was withdrawn. Other
+  pages that still show it are stale: Mortgage Rate Relief left `/rates` in August but
+  `/homebuying-guidance` kept quoting 5.125%. The stale copy feeds `conflicts()` only.
 
 ## R6. Say "I don't know" honestly (refusal)
 
@@ -121,8 +123,10 @@ branch" text, **no digits at all**) when:
 
 - the product isn't on the site in the chosen snapshot (e.g. 7/1 ARM, construction-loan rate);
 - the entity isn't on the site (e.g. a branch name that doesn't exist);
-- the only evidence is tier D/E/X for a *rate* question (old blog numbers don't count as
-  a current rate).
+- the only evidence for a *rate* is tier E/X (blog, newsroom, legacy): old blog numbers don't
+  count as a current rate. A tier-D landing page may answer when it is the only page that lists
+  the product and the offer has not ended or been withdrawn (Achieve Money Market).
+- the product is priced by term and the term asked for isn't listed (a 10-year mortgage).
 
 Never put a number in a refusal. The scorer fails a refusal that contains any number not
 already in the question, **including a phone number** (800-373-7600 parses as numbers). So
@@ -138,8 +142,7 @@ Locator → `dupaco.com/contact`, not `/locations/branch-hours`.)
 ## R8. Determinism
 
 Same question, same `as_of` → byte-identical answer. Paraphrases should resolve to the same
-fact key and so produce the same numbers. This means no randomness, stable sorting, and
-caching any LLM call keyed on the normalised question.
+fact key and so produce the same numbers. This means no randomness and stable sorting.
 
 ---
 

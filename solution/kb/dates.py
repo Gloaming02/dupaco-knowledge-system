@@ -55,6 +55,22 @@ def page_date(markdown: str) -> Optional[str]:
     return upd[-1] if upd else None
 
 
+def as_of_date(value) -> Optional[str]:
+    """Normalise an `as_of` to an ISO day: '2026-05-31', '2026-05-31T12:00:00', '05/31/2026',
+    'May 31, 2026'. A bare month ('2026-05', 'May 2026') means the end of that month.
+    None when it can't be read."""
+    s = str(value or "").strip()
+    if (m := re.match(r"(\d{4})-(\d{2})(?:-(\d{2}))?", s)):
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3) or 31)
+    elif (m := re.search(_MDY, s)) or (m := re.search(_LONG, s, re.I)):
+        return _iso(m.groups() if m.re.pattern == _MDY else (None, None, None) + m.groups())
+    elif (m := re.search(r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+(\d{4})", s, re.I)):
+        y, mo, d = int(m.group(2)), _MONTHS[m.group(1).lower()], 31
+    else:
+        return None
+    return f"{y:04d}-{mo:02d}-{d:02d}" if 1 <= mo <= 12 and 1 <= d <= 31 else None
+
+
 _ISO = r"(\d{4})-(\d{2})-(\d{2})"
 ENDED = re.compile(r"\b(?:offer\s+)?(?:ended|expired|ends|expires|valid (?:through|until)|available (?:through|until)|"
                    r"through|until)\s+(?:on\s+)?(?:" + _MDY + "|" + _LONG + "|" + _ISO + ")", re.I)

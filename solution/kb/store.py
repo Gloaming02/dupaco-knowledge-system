@@ -37,6 +37,7 @@ class SnapshotView:
 class Store:
     def __init__(self):
         self.snapshots: list[SnapshotView] = []          # oldest -> newest
+        self._sheet_rows: set[str] = set()                # row names ever listed on a rate sheet
         self._chunk_cache: dict[int, list] = {}           # identical text is chunked once
 
     def add(self, snapshot) -> SnapshotView:
@@ -67,18 +68,36 @@ class Store:
                     new = replace(old, carried=True)
                     new.facts = [replace(f, page=new) for f in old.facts]
                     view.pages[key] = new
+        self._withdraw(view)
         self.snapshots.append(view)
         self.snapshots.sort(key=lambda s: s.taken_on)
         return view
 
+    def _withdraw(self, view: SnapshotView) -> None:
+        """Rule R5: a row the rate sheet used to list and no longer does was withdrawn. Other
+        pages that still show it (a landing page, a guide) are stale: their copy is kept for
+        conflicts() but no longer answers questions."""
+        def row(f):
+            return "".join(c for c in f.name.lower() if c.isalnum())
+        sheets = [p for p in view.pages.values() if p.tier == authority.RATE_SHEET and not p.carried]
+        if not sheets:
+            return
+        listed = {row(f) for p in sheets for f in p.facts}
+        withdrawn = self._sheet_rows - listed
+        self._sheet_rows |= listed
+        for p in view.pages.values():
+            if p.tier != authority.RATE_SHEET and any(row(f) in withdrawn for f in p.facts):
+                p.stale_facts = p.stale_facts + [f for f in p.facts if row(f) in withdrawn]
+                p.facts = [f for f in p.facts if row(f) not in withdrawn]
+
     def at(self, as_of: Optional[str] = None) -> SnapshotView:
         """Rule R1: no date -> latest; a date -> newest snapshot taken on or before it
         (the earliest snapshot if the date predates them all)."""
-        if not as_of:
+        day = dates.as_of_date(as_of)
+        if not day:
             return self.snapshots[-1]
         days = [s.taken_on for s in self.snapshots]
-        i = bisect_right(days, str(as_of)[:10])
-        return self.snapshots[max(0, i - 1)]
+        return self.snapshots[max(0, bisect_right(days, day) - 1)]
 
     def history(self, key: str) -> list[PageVersion]:
         """All versions of one page, oldest first (absent snapshots skipped)."""
