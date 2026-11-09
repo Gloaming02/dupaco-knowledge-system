@@ -1,5 +1,7 @@
 # Supplied website data — must NOT be published (assignment rule)
 snapshots/
+# ...except the kit's tiny synthetic self-test site (fictional example-cu.test, not Dupaco data)
+!harness/selftest/snapshots/
 snapshots_zip/
 *.zip
 Knowledge-Hackathon-Assignment.pdf
