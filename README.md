@@ -27,7 +27,7 @@ The scorer unpacks the zips into `snapshots/` the first time it runs. Other tool
   snapshot, and a load and odd-input test (see NOTES).
 - `scripts/explore.py` browses the snapshots (`grep`, `history`, `diff`).
 
-Results: public eval 0.88 (accuracy 0.88, consistency 1.00, speed 1.00, no stale values), and
+Results: public eval 0.89 (accuracy 0.89, consistency 1.00, speed 1.00, no stale values), and
 1.00 on the self-test site. No API keys, standard library only.
 
 Docs: [`solution/NOTES.md`](solution/NOTES.md) covers how it works, and

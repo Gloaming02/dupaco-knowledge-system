@@ -45,6 +45,7 @@ The short version:
 8. **Honest refusal (R6).** The system refuses with `confident=False` and no digits in the text
    (the scorer counts a phone number as a number) when:
    - a rate question matches no current rate table,
+   - the product is priced by term and the term asked for isn't listed (a 10-year mortgage),
    - an unknown word modifies the product noun ("**construction** loan", "**adjustable**-rate mortgage"),
    - a named branch has no posted hours, or
    - a named entity appears nowhere on the site.
@@ -63,9 +64,12 @@ The short version:
 
 **Rate lookup.** Parse the question into the same key fields. Drop facts that contradict an
 explicit qualifier. Score product similarity with IDF-weighted word overlap (with a few
-synonyms: car→auto, CD→certificate, mortgage→home loan). Then let **one page** win by
+synonyms: car→auto, CD→certificate, home loan→mortgage). Then let **one page** win by
 (present in crawl, authority, printed date) and answer only from that page, so stale copies can
-never leak into the text. Questions that ask for several products ("what cards do you offer")
+never leak into the text. A dollar amount selects the tightest tier that contains it
+("$300,000 or less", not also "$832,750 or less"), and "a new car" selects the newest
+model-year band. Product pages that show the same row with the same value are cited next to
+the rate sheet. Questions that ask for several products ("what cards do you offer")
 get one winning page per audience.
 
 **Change questions.** "Did the 10-month jumbo special change?" gets the current value plus
@@ -87,7 +91,7 @@ and the rate sheet's "2024-27" compare as the same "newest model years" fact.
 
 To keep precision up, these are excluded:
 - products we can't name with confidence,
-- `0.00%` loan cells (empty templates),
+- `0.00%` loan cells (empty templates) and the mortgage tables' "Points" column,
 - intro and balance-transfer rates (compared against standard APRs),
 - business/IRA mirrors with identical numbers.
 
@@ -98,11 +102,11 @@ boilerplate conflict is reported too.
 ## Testing
 
 - `python harness/run_eval.py --submission solution --eval eval/public_eval.jsonl` gives final
-  0.88 (qa 0.88, consistency 1.00, speed 1.00, 0 stale-value hits). No conflict gold is shipped
+  0.89 (qa 0.89, consistency 1.00, speed 1.00, 0 stale-value hits). No conflict gold is shipped
   for the public set.
 - **Stress tests** (`tests/`), written because the hidden set is larger and reworded:
   - `paraphrase_eval.jsonl`: two rewordings of every public question, grouped with the
-    original. qa 0.91, paraphrase consistency 0.90, 0 stale hits.
+    original. qa 0.93, paraphrase consistency 0.90, 0 stale hits.
   - `fact_sweep.py`: one generated question for **every rate-sheet row in every snapshot**
     (663 questions, each asked with that snapshot's `as_of`). 100% contain the right value, and
     0 contain another snapshot's value for the same row.

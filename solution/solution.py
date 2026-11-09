@@ -118,9 +118,10 @@ class KnowledgeSystem:
                 text = rates.compose(rows, rq)
                 if CHANGE_Q.search(question):
                     text += " " + self._history(rows, rq, view)
-                return Answer(text=text,
-                              sources=[Source(url=page.url, snapshot_id=page.snapshot_id, quote=rows[0].text[:200])],
-                              conflict_note=note)
+                sources = [Source(url=page.url, snapshot_id=page.snapshot_id, quote=rows[0].text[:200])]
+                sources += [Source(url=f.page.url, snapshot_id=f.page.snapshot_id, quote=f.text[:200])
+                            for f in self._agreeing(rows, candidates)]
+                return Answer(text=text, sources=sources, conflict_note=note)
             if rq.asks_number:
                 # A rate question no current rate table answers: don't guess from blog text (R6).
                 return Answer(text=REFUSAL, confident=False)
@@ -153,6 +154,19 @@ class KnowledgeSystem:
         text = passage if not extra else f"{passage} {extra}"
         return Answer(text=text[:900],
                       sources=[Source(url=page.url, snapshot_id=page.snapshot_id, quote=passage[:200])])
+
+    @staticmethod
+    def _agreeing(rows, candidates, limit=2):
+        """Product pages that publish the same row with the same value as the winning page:
+        cited as well, since they are where a member would look the rate up."""
+        out = {}
+        for f in candidates:
+            p = f.page
+            if p is rows[0].page or p.carried or p.expired or p.tier < 4 or p.key in out:
+                continue
+            if any(f.term == r.term and f.amount == r.amount and f.values == r.values for r in rows):
+                out[p.key] = f
+        return sorted(out.values(), key=lambda f: (-f.page.tier, f.page.key))[:limit]
 
     @staticmethod
     def _with_neighbours(page, passage, limit=700):

@@ -10,7 +10,7 @@
 import math
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 from .authority import NAMES
@@ -21,13 +21,15 @@ def authority_name(tier: int) -> str:
     return NAMES[tier]
 
 RATE_INTENT = re.compile(r"\b(rates?|apys?|aprs?|interest|dividends?|yields?|earn|pays?|paying)\b|%", re.I)
+# "Do you offer a 40-year mortgage?": a product with a term is a rate-table question too.
+TERM_PRODUCT = re.compile(r"\b(?:do you (?:offer|have)|is there|are there)\b.*\b(?:mortgages?|loans?|certificates?|cds?)\b", re.I)
 NOT_RATE = re.compile(r"\b(link|url|website|web page|webpage|where can i (?:see|find))\b", re.I)
 WORD = re.compile(r"[a-z]+")
 SYNONYMS = {
     "car": "auto", "cars": "auto", "vehicle": "auto", "vehicles": "auto", "automobile": "auto",
     "truck": "auto", "motorcycle": "auto",
     "cd": "certificate", "cds": "certificate", "certificates": "certificate", "term": "certificate",
-    "mortgage": "home", "mortgages": "home", "house": "home",
+    "mortgages": "mortgage",
     "card": "visa", "cards": "visa", "credit": "visa",
     "boat": "boat", "rv": "rv", "atv": "atv", "snowmobile": "atv",
 }
@@ -50,6 +52,13 @@ HEAD = re.compile(r"\b([a-z]+)(?:[\s-]+rate)?[\s-]+(?:loans?|mortgages?|accounts
 LISTING = re.compile(r"\b(offer|offers|options|all|types|kinds|list|cards|loans|accounts|certificates)\b", re.I)
 AUDIENCE_WORDS = {"business", "roth", "traditional", "ira", "personal"}
 VARIANTS = ("jumbo", "refinance", "variable", "heloc")
+SUPERLATIVE = {"highest": "highest", "best": "highest", "top": "highest", "most": "highest", "max": "highest",
+               "maximum": "highest", "lowest": "lowest", "cheapest": "lowest", "least": "lowest",
+               "min": "lowest", "minimum": "lowest"}
+NEW_VEHICLE = re.compile(r"\b(?:brand[- ])?new (?:model[- ]year )?(?:car|auto|automobile|vehicle|truck|motorcycle|suv)s?\b")
+
+
+HOME_LOAN = re.compile(r"\b(?:home|house) loans?\b")   # a mortgage; not home equity / home improvement
 
 
 def _stem(w: str) -> str:
@@ -58,7 +67,7 @@ def _stem(w: str) -> str:
 
 
 def words(text: str) -> list[str]:
-    return [_stem(w) for w in WORD.findall(text.lower())]
+    return [_stem(w) for w in WORD.findall(HOME_LOAN.sub("mortgage", text.lower()))]
 
 
 @dataclass
@@ -75,29 +84,35 @@ class RateQuery:
     asks_number: bool = False              # explicitly asks for a rate/APY/APR value
     modifiers: list = None                 # words right before a product noun
     listing: bool = False                  # 'what X do you offer' / plural 'rates for the cards'
+    newest: bool = False                   # "a new car": the newest model-year band only
 
 
 PHRASES = [(re.compile(r"\bshare (certificates?)\b"), r"\1"),          # credit-union word for a CD
            (re.compile(r"\bcertificates? of deposits?\b"), "certificate"),
-           (re.compile(r"\bterm[- ]share\b"), "certificate")]
+           (re.compile(r"\bterm[- ]share\b"), "certificate"),
+           (HOME_LOAN, "mortgage")]
 
 
 def parse(question: str) -> Optional[RateQuery]:
     q = question.lower()
     for rx, rep in PHRASES:
         q = rx.sub(rep, q)
-    if not RATE_INTENT.search(q) or NOT_RATE.search(q):
+    by_term = bool(TERM_PRODUCT.search(q)) and term_months(q) is not None
+    if not (RATE_INTENT.search(q) or by_term) or NOT_RATE.search(q):
         return None
     # Audience words are a separate filter (rule R4), not part of the product name.
     raw = [w for w in WORD.findall(q) if _stem(w) not in GENERIC and w not in GENERIC
            and (w not in AUDIENCE_WORDS or w == "personal") and w not in ("iras", "retirement")]
     rq = RateQuery(product=[_stem(w) for w in raw])
-    rq.modifiers = [m.group(1) for m in HEAD.finditer(q) if m.group(1) not in GENERIC]
+    rq.modifiers = [m.group(1) for m in HEAD.finditer(q)
+                    if m.group(1) not in GENERIC and m.group(1) not in SUPERLATIVE]
     rq.listing = bool(LISTING.search(q)) or bool(re.search(r"\b(rates|apys|aprs)\b", q))
     rq.term = term_months(q)
-    rq.asks_number = bool(re.search(r"\b(rates?|apys?|aprs?|interest rates?|dividend rates?)\b", q)) and not re.search(r"\b(any|which)\b", q)
+    rq.asks_number = (by_term or bool(re.search(r"\b(rates?|apys?|aprs?|interest rates?|dividend rates?)\b", q))) \
+        and not re.search(r"\b(any|which)\b", q)
     if re.search(r"\b(car|auto|vehicle|model|truck|motorcycle)", q) and (m := re.search(r"\b(1[89]\d\d|20[0-3]\d)\b", q)):
         rq.year = int(m.group(1))
+    rq.newest = not rq.year and bool(NEW_VEHICLE.search(q))
     if (m := MONEY_RANGE.search(q)) or (m := re.search(r"\$\s?(\d[\d,]*)\s*(?:and|-|to)\s*\$?\s?(\d[\d,]*)", q)):
         rq.amount = (float(m.group(1).replace(",", "")), float(m.group(2).replace(",", "")))
     elif (m := re.search(r"\$\s?(\d[\d,]*(?:\.\d+)?)", q)):
@@ -115,10 +130,7 @@ def parse(question: str) -> Optional[RateQuery]:
         rq.audience = "ira"
         rq.ira_kind = "roth" if "roth" in q else ("traditional" if "traditional" in q else None)
     rq.variants = frozenset(v for v in VARIANTS if v in q or (v == "refinance" and "refi" in q))
-    if re.search(r"\b(highest|best|top|most|max)", q):
-        rq.superlative = "highest"
-    elif re.search(r"\b(lowest|cheapest|least|min)", q):
-        rq.superlative = "lowest"
+    rq.superlative = next((kind for w, kind in SUPERLATIVE.items() if re.search(rf"\b{w}\b", q)), None)
     return rq
 
 
@@ -182,6 +194,12 @@ class RateBook:
 
     def lookup(self, rq: RateQuery):
         """Return (winning facts from one page, all candidate facts) or (None, candidates)."""
+        if rq.term:
+            # A product priced by term (15/20/30-year mortgages) has no rate for a term it doesn't
+            # list: a 10-year mortgage must not fall through to another product's 120-month row.
+            _, product = self.lookup(replace(rq, term=None))
+            if any(f.term for f in product) and not any(f.term == rq.term for f in product):
+                return None, []
         scored = []
         qs = self._query_words(rq)
         for f, fw in zip(self.facts, self._words):
@@ -230,6 +248,7 @@ class RateBook:
                              by_sec[(f.audience, f.section.split(" / ")[-1].lower())] >= best_here - 0.005]
         else:
             rows = [f for f in top if f.page is win.page and f.section.split(" / ")[-1].lower() == win_sec]
+        rows = _narrow(rows, rq)
         if rq.superlative and rows:
             metric = rq.metric or ("apr" if rows[0].is_loan else "apy")
             vals = [(_pct(f.values.get(metric)), f) for f in rows if f.values.get(metric)]
@@ -237,6 +256,23 @@ class RateBook:
                 pick = (max if rq.superlative == "highest" else min)(vals, key=lambda x: x[0])
                 rows = [pick[1]]
         return rows, top
+
+
+def _narrow(rows: list, rq: RateQuery) -> list:
+    """Keep only the tier that was asked for (rule R4)."""
+    if rq.newest and any(f.years for f in rows):
+        band = max((f.years for f in rows if f.years), key=lambda b: (b[1], b[0]))
+        rows = [f for f in rows if f.years == band]
+    if rq.amount:
+        # "$300,000 or less" and "$832,750 or less" both contain $250,000: the tightest band is the tier.
+        tightest = {}
+        for f in rows:
+            if f.amount:
+                k = (f.section, f.term, f.years, f.flags)
+                tightest[k] = min(tightest.get(k, INF), f.amount[1] - f.amount[0])
+        rows = [f for f in rows if not f.amount
+                or f.amount[1] - f.amount[0] == tightest[(f.section, f.term, f.years, f.flags)]]
+    return rows
 
 
 def _pct(s: Optional[str]) -> float:

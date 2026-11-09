@@ -183,10 +183,11 @@ def extract(page) -> list[RateFact]:
             f.flags = f.flags | {"intro"}
         for h, c in zip(header, cells):
             hl = h.lower()
-            if PCT.search(c) and "payment" not in hl:
-                f.values.setdefault(_metric(h, c, is_loan), _display(c))
-                continue
+            # Not rate columns. Mortgage "Points" cells read "0.00%" and would be taken for the APR.
             if "payment" in hl or "min. to open" in hl or "points" in hl:
+                continue
+            if PCT.search(c):
+                f.values.setdefault(_metric(h, c, is_loan), _display(c))
                 continue
             f.term = f.term or term_months(c)
             f.years = f.years or year_band(c)
