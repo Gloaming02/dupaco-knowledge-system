@@ -54,6 +54,9 @@ from kb.conflicts import find as find_conflicts  # noqa: E402
 from kb.index import SnapshotIndex  # noqa: E402
 from kb.store import Store  # noqa: E402
 
+CHANGE_Q = re.compile(r"\b(change[ds]?|changing|go(?:ne)? (?:up|down)|went (?:up|down)|increase[ds]?|decrease[ds]?|"
+                      r"raised?|lowered?|drop(?:ped)?|used to|previous(?:ly)?|before|history|different)\b", re.I)
+
 REFUSAL = ("I'm not able to confirm that from Dupaco's website, so I don't want to guess. "
            "Please contact Dupaco or visit a branch for the current details.")
 
@@ -112,7 +115,10 @@ class KnowledgeSystem:
                                 - {v for f in rows for v in f.values.values()})
                 note = (f"Other pages show {', '.join(others)}; using the {page.url} "
                         f"({rates.authority_name(page.tier)}) as the authoritative source.") if others else None
-                return Answer(text=rates.compose(rows, rq),
+                text = rates.compose(rows, rq)
+                if CHANGE_Q.search(question):
+                    text += " " + self._history(rows, rq, view)
+                return Answer(text=text,
                               sources=[Source(url=page.url, snapshot_id=page.snapshot_id, quote=rows[0].text[:200])],
                               conflict_note=note)
             if rq.asks_number:
@@ -167,6 +173,47 @@ class KnowledgeSystem:
                         continue
                     out = (head + body + " " + out[len(head):]) if j < i else (out + " " + body)
         return out
+
+    def _history(self, rows, rq, view) -> str:
+        """For 'did it change?' questions: a dated timeline of each answered row, matched across
+        snapshots by the same normalised fact key the conflict detector uses (product family,
+        audience, term, model-year rank, amount tier, variant, metric), from rate-sheet-tier
+        pages only, so a stale calculator never enters the history."""
+        from kb.conflicts import _key, _year_ranks, family
+        from kb.rates import describe
+
+        def keyed(snap):
+            facts = [g for p in snap.pages.values() if not p.carried and p.tier >= 4 for g in p.facts]
+            ranks = _year_ranks(facts)
+            out = {}
+            for g in facts:
+                fam, _ = family(g)
+                k, m = _key(g, fam, ranks) if fam else (None, None)
+                if k and (k not in out or (g.page.tier, g.page.key) > (out[k][0].page.tier, out[k][0].page.key)):
+                    out[k] = (g, g.values[m])
+            return out
+
+        now = keyed(view)
+        notes = []
+        for f in rows[:12]:
+            entry = next((k for k, (g, _) in now.items() if g is f), None)
+            if entry is None:
+                continue
+            timeline = []
+            for snap in self.store.snapshots:
+                if snap.taken_on > view.taken_on:
+                    break
+                hit = keyed(snap).get(entry)
+                if hit and (not timeline or timeline[-1][1] != hit[1]):
+                    timeline.append((snap.taken_on, hit[1]))
+            label = describe(f, entry[-1]).split(":")[0]
+            if len(timeline) > 1:
+                notes.append((0, f"History for {label}: " + "; ".join(f"{v} from {d}" for d, v in timeline)
+                               + " (dates are the snapshots where each value first appeared)."))
+            elif timeline:
+                notes.append((1, f"{label}: unchanged at {timeline[0][1]} since {timeline[0][0]}."))
+        notes.sort(key=lambda n: n[0])                     # rows that actually changed first
+        return " ".join(n for _, n in notes[:3])
 
     # -- routes -------------------------------------------------------------------------------
     @staticmethod

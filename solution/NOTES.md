@@ -58,7 +58,7 @@ The short version:
 | address / branch in X | "address of the X branch", "branch in X" | the `/contact` branch locator |
 | phone | "phone / call" | the toll-free number repeated most on non-editorial pages |
 | stats | "how many branches / members / employees", "assets" | newest boilerplate (R3b) |
-| rates | rate/APY/APR intent | `kb/rates.py`, the structured fact lookup (below) |
+| rates | rate/APY/APR intent | `kb/rates.py`, the structured fact lookup (below); "did it change?" questions also get a dated history |
 | passage | everything else | BM25 → one winning page → best passage plus neighbouring paragraphs |
 
 **Rate lookup.** Parse the question into the same key fields. Drop facts that contradict an
@@ -67,6 +67,13 @@ synonyms: car→auto, CD→certificate, mortgage→home loan). Then let **one pa
 (present in crawl, authority, printed date) and answer only from that page, so stale copies can
 never leak into the text. Questions that ask for several products ("what cards do you offer")
 get one winning page per audience.
+
+**Change questions.** "Did the 10-month jumbo special change?" gets the current value plus
+a dated history, e.g. "3.90% from 2026-05-12; 4.00% from 2026-09-28". The history is built
+from rate-sheet and product pages only, so a stale calculator never enters it. Rows are
+matched across snapshots by the same normalised fact key the conflict detector uses, because
+row labels change between crawls (the "2023–26" model-year band became "2024-27"). With
+`as_of`, the history stops at that date.
 
 ## Conflicts (`kb/conflicts.py`)
 
