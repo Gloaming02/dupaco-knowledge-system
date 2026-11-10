@@ -35,12 +35,6 @@ class SnapshotIndex:
             return 1.0          # a stop word: treat as common
         return min(len(self.postings.get(t, ())) for t in toks) / max(1, len(self.docs))
 
-    def on_product_pages(self, word: str) -> bool:
-        """Does any page above the blog/newsroom tier use this word? A product the credit union
-        sells is described on its own pages, not only in articles."""
-        toks = tokens(word)
-        return not toks or all(any(self.docs[d][0].tier > 1 for d, _ in self.postings.get(t, ())) for t in toks)
-
     def search(self, query: str, k: int = 10):
         scores = defaultdict(float)
         for t in set(tokens(query)):

@@ -1,0 +1,54 @@
+{"id": "held-001", "question": "What does Investor's Choice Money Market pay on a balance of 2 million dollars?", "category": "answer", "must_include": ["0.40%"], "must_not_include": ["0.20%", "0.35%"]}
+{"id": "held-002", "question": "With 12,000 dollars in You Name It Savings, what's my APY?", "category": "answer", "must_include": ["0.15%"], "must_not_include": ["0.10%", "0.20%"]}
+{"id": "held-003", "question": "What's the APY on High-Yield Savings if I deposit $600k?", "category": "answer", "must_include": ["2.25%"], "must_not_include": ["1.50%", "2.05%"]}
+{"id": "held-004", "question": "I have a little under $10,000 in Share Savings. What do I earn?", "category": "answer", "must_include": ["0.10%"], "must_not_include": ["0.15%"]}
+{"id": "held-005", "question": "What's the Share Savings dividend rate for more than $25,000?", "category": "answer", "must_include": ["0.20%"], "must_not_include": ["0.15%"]}
+{"id": "held-006", "question": "Holiday Club Savings rate?", "category": "answer", "must_include": ["0.20%"], "must_not_include": []}
+{"id": "held-007", "question": "What is the APR on a 24 month personal loan?", "category": "answer", "must_include": ["9.99%"], "must_not_include": ["10.49%"]}
+{"id": "held-008", "question": "What's the rate on a home equity loan for five years?", "category": "answer", "must_include": ["6.74%"], "must_not_include": ["7.24%"]}
+{"id": "held-009", "question": "RV loan for $12,000 over 4 years, what's the APR?", "category": "answer", "must_include": ["7.59%"], "must_not_include": ["7.29%", "7.89%"]}
+{"id": "held-010", "question": "Boat loan APR for $45,000 over eight years?", "category": "answer", "must_include": ["8.34%"], "must_not_include": ["8.59%"]}
+{"id": "held-011", "question": "What's the APR on a 2019 truck financed for 72 months?", "category": "answer", "must_include": ["6.49%"], "must_not_include": ["6.34%", "5.79%"]}
+{"id": "held-012", "question": "jet ski loan rate for a 2023 model over 36 months", "category": "answer", "must_include": ["8.34%"], "must_not_include": ["8.54%"]}
+{"id": "held-013", "question": "What is the 20-year mortgage APR?", "category": "answer", "must_include": ["7.26%"], "must_not_include": []}
+{"id": "held-014", "question": "15 year refinance APR?", "category": "answer", "must_include": ["6.88%"], "must_not_include": []}
+{"id": "held-015", "question": "What APY does the 17 month jumbo certificate special pay?", "category": "answer", "must_include": ["4.20%"], "must_not_include": ["4.10%"]}
+{"id": "held-016", "question": "Rewards Visa APR?", "category": "answer", "must_include": ["15.50%"], "must_not_include": ["12.50%"]}
+{"id": "held-017", "question": "What's the Launchpad Savings APY on $500?", "category": "answer", "must_include": ["3.25%"], "must_not_include": []}
+{"id": "held-018", "question": "30 month certificate APY", "category": "answer", "must_include": ["2.30%"], "must_not_include": []}
+{"id": "held-019", "question": "What was the APR on a 48-month auto loan for a 2025 car on May 12, 2026?", "category": "answer", "must_include": ["4.99%"], "must_not_include": ["5.19%"]}
+{"id": "held-020", "question": "Back in May 2026, what did the 10 month jumbo certificate special pay?", "category": "answer", "must_include": ["3.90%"], "must_not_include": ["4.00%"]}
+{"id": "held-021", "question": "What do you charge for an official check?", "category": "answer", "must_include": ["$5.00"], "must_not_include": []}
+{"id": "held-022", "question": "How much is it to stop a check?", "category": "answer", "must_include": ["$30.00"], "must_not_include": []}
+{"id": "held-023", "question": "What's the fee for a levy?", "category": "answer", "must_include": ["$25.00"], "must_not_include": []}
+{"id": "held-024", "question": "Fee for child support processing?", "category": "answer", "must_include": ["$10.00"], "must_not_include": []}
+{"id": "held-025", "question": "How much does a temporary draft cost?", "category": "answer", "must_include": ["$5.00"], "must_not_include": []}
+{"id": "held-026", "question": "What's the charge for a document copy?", "category": "answer", "must_include": ["$1.00"], "must_not_include": []}
+{"id": "held-027", "question": "How much do you charge per hour for account research?", "category": "answer", "must_include": ["$25.00"], "must_not_include": []}
+{"id": "held-028", "question": "What's the returned payment fee on a business credit card?", "category": "answer", "must_include": ["$25"], "must_not_include": ["$35"]}
+{"id": "held-029", "question": "Is there a fee for incoming wires?", "category": "answer", "must_include": ["$10.00"], "must_not_include": ["$55.00"]}
+{"id": "held-030", "question": "What is the fee for a certified draft?", "category": "answer", "must_include": ["$5.00"], "must_not_include": []}
+{"id": "held-031", "question": "What's the abandoned account fee?", "category": "answer", "must_include": ["$50.00"], "must_not_include": []}
+{"id": "held-032", "question": "What's the fee for a late mortgage payment?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "held-033", "question": "What's the fee to expedite a passport?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "held-034", "question": "What's the prepayment penalty fee on a personal loan?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "held-035", "question": "What's the rate on a platinum money market account?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "held-036", "question": "What is the APY on a 3 year jumbo certificate?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "held-037", "question": "What's the APR on a 30-year fixed FHA mortgage?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "held-038", "question": "What's the rate for an 18 month auto loan?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "held-039", "question": "What's the APR on a payday loan?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "held-040", "question": "What's the APR on a fishing boat loan of $30,000 for 72 months?", "category": "answer", "must_include": ["7.34%"], "must_not_include": []}
+{"id": "held-041", "question": "I want to finance a brand-new Harley for 60 months, what's the APR?", "category": "answer", "must_include": ["5.39%"], "must_not_include": []}
+{"id": "held-042", "question": "What's the APY on my emergency fund Share Savings with $5,000?", "category": "answer", "must_include": ["0.10%"], "must_not_include": []}
+{"id": "held-043", "question": "APR on a kitchen remodel home improvement loan of $15,000?", "category": "answer", "must_include": ["8.50%"], "must_not_include": []}
+{"id": "held-044", "question": "What does a vacation You Name It Savings account earn at $3,000?", "category": "answer", "must_include": ["0.10%"], "must_not_include": []}
+{"id": "held-045", "question": "Does Dupaco have a location in Platteville?", "category": "answer", "must_include": ["Platteville"], "must_not_include": []}
+{"id": "held-046", "question": "is there a branch in waterloo?", "category": "answer", "must_include": ["Mullan"], "must_not_include": []}
+{"id": "held-047", "question": "Is there a Dupaco office in Milwaukee?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "held-048", "question": "What's the address of the Peosta branch?", "category": "answer", "must_include": ["Peosta"], "must_not_include": []}
+{"id": "held-049", "question": "How many members does Dupaco serve?", "category": "answer", "must_include": ["181,000"], "must_not_include": []}
+{"id": "held-050", "question": "What's Dupaco's ABA routing number?", "category": "answer", "must_include": ["273974581"], "must_not_include": []}
+{"id": "held-051", "question": "What are the Saturday drive-up hours?", "category": "answer", "must_include": ["1 p.m."], "must_not_include": []}
+{"id": "held-052", "question": "Tell me the lobby hours on weekdays", "category": "answer", "must_include": ["8:30"], "must_not_include": []}
+{"id": "held-053", "question": "What's the capital of France?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "held-054", "question": "Can you recommend a good pizza place?", "category": "should_refuse", "must_include": [], "must_not_include": []}

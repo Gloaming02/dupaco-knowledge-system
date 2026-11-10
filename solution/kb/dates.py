@@ -85,3 +85,15 @@ def end_dates(text: str) -> list[str]:
         elif (d := _iso(g[:6])):
             out.append(d)
     return sorted(out)
+
+
+_MONTH_YEAR = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+\d{4}"
+ASKED_AT = re.compile(r"\b(?:as of|back in|in|on|during|at the end of|for|since)\s+(?:the end of\s+)?("
+                      + _MDY + "|" + _LONG + "|" + _MONTH_YEAR + r"|\d{4}-\d{2}(?:-\d{2})?)", re.I)
+
+
+def question_date(question: str) -> Optional[str]:
+    """'What was the rate back in May 2026?' -> '2026-05-31'. The caller's `as_of` argument
+    always takes precedence; this is for a date that only appears in the wording."""
+    m = ASKED_AT.search(question or "")
+    return as_of_date(m.group(1)) if m else None

@@ -85,6 +85,7 @@ class RateFact:
     flags: frozenset = frozenset()     # jumbo, special, refinance, variable, …
     tier_label: str = ""                # the cell that defines the balance/amount tier, as printed
     values: dict = field(default_factory=dict)   # metric -> display string ("5.39%", "12.50% – 19.50%")
+    extras: dict = field(default_factory=dict)   # other printed columns: min_open, min_earn
 
     @property
     def product_text(self) -> str:
@@ -183,10 +184,17 @@ def extract(page) -> list[RateFact]:
                             if w in whole.split("http")[0])
         if re.search(r"introductory|intro\b|promo|balance transfer", name, re.I):
             f.flags = f.flags | {"intro"}
+        max_balance = None
         for h, c in zip(header, cells):
             hl = h.lower()
             # Not rate columns. Mortgage "Points" cells read "0.00%" and would be taken for the APR.
-            if "payment" in hl or "min. to open" in hl or "points" in hl:
+            if "min. to open" in hl or "minimum to open" in hl:
+                f.extras["min_open"] = c
+                continue
+            if "max" in hl and "%" not in c and (m := MONEY_ONE.search(c)):
+                max_balance = _num(m.group(1))       # "Max. Balance $1,000": the tier ends there
+                continue
+            if "payment" in hl or "points" in hl:
                 continue
             if PCT.search(c):
                 f.values.setdefault(_metric(h, c, is_loan), _display(c))
@@ -199,6 +207,9 @@ def extract(page) -> list[RateFact]:
                     f.tier_label = c
             elif f.amount is None and "min" in hl and (m := MONEY_ONE.search(c)):
                 f.amount = (_num(m.group(1)), INF)
+                f.extras["min_earn"] = c
+        if max_balance is not None and (f.amount is None or f.amount[1] == INF):
+            f.amount = (f.amount[0] if f.amount else 0.0, max_balance)
         if f.values:
             # A deposit row priced by term ("60 Month" under a bare "Regular" caption) is a
             # certificate even when the table never says so (older snapshots of /rates).

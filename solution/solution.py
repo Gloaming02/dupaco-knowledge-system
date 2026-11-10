@@ -50,7 +50,9 @@ except ImportError:  # running without the kit's harness on the path: same shape
 
 import re  # noqa: E402
 
-from kb import directory, fees, rates  # noqa: E402
+from dataclasses import replace  # noqa: E402
+
+from kb import dates, directory, fees, interpret, rates  # noqa: E402
 from kb.links import ACTION_Q as LINK_ACTION, INTENT as LINK_INTENT, LinkBook  # noqa: E402
 from kb.conflicts import find as find_conflicts  # noqa: E402
 from kb.dates import as_of_date  # noqa: E402
@@ -71,6 +73,8 @@ class KnowledgeSystem:
         self.ratebooks = {}        # snapshot_id -> RateBook
         self.linkbooks = {}        # snapshot_id -> LinkBook
         self.feebooks = {}         # snapshot_id -> FeeBook
+        self.interpreter = None    # optional second tier of question understanding (kb/interpret.py)
+        self._hints = {}           # (snapshot_id, question) -> checked interpreter reply
         self._cache = {}           # (snapshot_id, question) -> Answer: same question, same answer (R8)
         self._stats_cache = {}
         self._conflicts = None
@@ -86,15 +90,22 @@ class KnowledgeSystem:
         self.ratebooks[view.snapshot_id] = rates.RateBook(
             [f for p in pages if p.tier >= 2 for f in p.facts],
             site_df=self.indexes[view.snapshot_id].df,
-            withdrawn=[f for p in pages for f in p.stale_facts],
-            on_product_pages=self.indexes[view.snapshot_id].on_product_pages)
+            withdrawn=[f for p in pages for f in p.stale_facts])
         self.linkbooks[view.snapshot_id] = LinkBook(view)
-        self.feebooks[view.snapshot_id] = fees.FeeBook(view)
+        # The products the rate sheets price, by the words of their table names: what a fee
+        # question may be "about" (kb/fees.py).
+        priced = {w for f in self.ratebooks[view.snapshot_id].facts if f.page.tier == 5
+                  for w in rates.words(f"{f.section.split(' / ')[-1]} {f.name}")}
+        priced -= rates.GENERIC | rates.AUDIENCE_WORDS | set(fees.NOT_PRODUCTS)
+        self.feebooks[view.snapshot_id] = fees.FeeBook(
+            view, product_of=lambda w: (s := rates._stem(w)) in priced and s or None)
 
     def answer(self, question, as_of=None):
         if not self.store.snapshots:
             return Answer(text=REFUSAL, confident=False)
         question = str(question or "")
+        if not as_of:                       # "…back in May 2026?": a date only in the wording (R1)
+            as_of = dates.question_date(question)
         try:
             view = self.store.at(as_of)
         except Exception:
@@ -114,7 +125,7 @@ class KnowledgeSystem:
         return ans
 
     def _answer(self, question, view):
-        for route in (self._link, self._hours, self._address, self._branch_in, self._phone, self._stats, self._fee):
+        for route in (self._link, self._fee, self._hours, self._address, self._branch_in, self._phone, self._stats):
             try:
                 a = route(question, view)
             except Exception:          # a specialised route must never sink the whole answer
@@ -123,7 +134,26 @@ class KnowledgeSystem:
                 return a
         rq = rates.parse(question)
         if rq:
-            rows, candidates = self.ratebooks[view.snapshot_id].lookup(rq)
+            book = self.ratebooks[view.snapshot_id]
+            rows, candidates = book.lookup(rq)
+            # Words the rules could not bind, or no match at all: the one place a second opinion
+            # is asked for, when an interpreter is configured.
+            if self.interpreter and (not rows or book.unbound(rq)):
+                hint = self._hint(question, view)
+                if hint.get("listed") is False:
+                    return Answer(text=REFUSAL, confident=False,
+                                  conflict_note="Interpreter: the question asks for a product the site does not list.")
+                if hint.get("product"):
+                    rq = replace(rq, product=rates.words(hint["product"]), modifiers=[])
+                    rows, candidates = book.lookup(rq)
+            if rows and rq.min_open:
+                mins = list(dict.fromkeys(f.extras.get("min_open") or f.extras.get("min_earn") for f in rows))
+                if all(mins):
+                    product = rows[0].section.split(" / ")[-1]
+                    return Answer(text=f"{product}: minimum to open {' / '.join(mins)}.",
+                                  sources=[Source(url=rows[0].page.url, snapshot_id=rows[0].page.snapshot_id,
+                                                  quote=rows[0].text[:200])])
+                rows = None                 # the table prints no minimum: not a rate question after all
             if rows:
                 page = rows[0].page
                 others = sorted({v for f in candidates if f.page is not page for v in f.values.values()}
@@ -137,7 +167,7 @@ class KnowledgeSystem:
                 sources += [Source(url=f.page.url, snapshot_id=f.page.snapshot_id, quote=f.text[:200])
                             for f in self._agreeing(rows, candidates)]
                 return Answer(text=text, sources=sources, conflict_note=note)
-            if rq.asks_number:
+            if rq.asks_number and not rq.min_open:
                 # A rate question no current rate table answers: don't guess from blog text (R6).
                 return Answer(text=REFUSAL, confident=False)
         if (missing := self._unknown_entity(question, view) or self._unknown_term(question, view)):
@@ -325,8 +355,10 @@ class KnowledgeSystem:
         srcs += [Source(url=u, snapshot_id=view.snapshot_id) for u in dict.fromkeys(p.url for p in pages)]
         return Answer(text=text, sources=srcs)
 
+    ADDRESS_Q = re.compile(r"\b(address|located|location of|where is|where's)\b", re.I)
+
     def _address(self, q, view):
-        if not re.search(r"\b(address|located|location of|where is)\b", q, re.I):
+        if not self.ADDRESS_Q.search(q):
             return None
         name = self._named_branch(q)
         if not name:
@@ -348,13 +380,15 @@ class KnowledgeSystem:
         # places anywhere goes to the general search, which is how closed branches are found.
         if (said := self._branch_mentions(name, view, need_street=True)):
             return said
-        if re.search(r"\baddress\b", q, re.I) and self._branch_mentions(name, view):
+        if self._branch_mentions(name, view):
             return Answer(text=f"Dupaco's website mentions a {name} branch, but I couldn't find its street address "
                                f"there, so I don't want to guess. Please contact Dupaco or use the branch locator.",
                           confident=False)
         return None
 
-    PLACE = re.compile(r"\bbranch(?:es)?\s+(?:in|at|near)\s+((?:[A-Z][\w'.-]*\s?){1,3})")
+    # "a branch in Madison", "a location in madison", "an office near Cedar Rapids"
+    PLACE = re.compile(r"\b(?:branch(?:es)?|locations?|offices?)\s+(?:in|at|near)\s+((?:[A-Za-z][\w'.-]*\s?){1,3})", re.I)
+    NOT_A_PLACE = set("the a an my your our this that town area city state today now please here there me us".split())
 
     def _locator(self, view):
         page = next((p for p in view.pages.values() if p.key.endswith("dupaco.com/contact")), None)
@@ -365,13 +399,21 @@ class KnowledgeSystem:
         m = self.PLACE.search(q)
         if not m:
             return None
-        place = m.group(1).strip().rstrip("?.!")
-        if re.match(r"(january|february|march|april|may|june|july|august|september|october|november|december|"
-                    r"today|now|\d)", place, re.I):
+        words = m.group(1).strip().rstrip("?.!").split()
+        while words and words[-1].lower() in self.NOT_A_PLACE:
+            words.pop()
+        if not words or words[0].lower() in self.NOT_A_PLACE or re.match(
+                r"(january|february|march|april|may|june|july|august|september|october|november|december|\d)",
+                words[0], re.I):
             return None
         page, entries = self._locator(view)
-        hits = [e for e in entries if "atm" not in e["kind"].lower() and place.lower() in
-                f"{e['city']} {e['street']}".lower()]
+        # The longest run of words that is a place the site knows ("Cedar Rapids", then "Cedar").
+        for n in range(len(words), 0, -1):
+            place = " ".join(w if w[:1].isupper() else w.title() for w in words[:n])
+            hits = [e for e in entries if "atm" not in e["kind"].lower() and place.lower() in
+                    f"{e['city']} {e['street']}".lower()]
+            if hits or self._branch_mentions(place, view) or n == 1:
+                break
         if hits:
             return Answer(text=f"Yes. Dupaco has {len(hits)} branch location(s) in {place}: " +
                                "; ".join(e["address"] for e in hits) + ".", sources=self._src(page))
@@ -400,8 +442,10 @@ class KnowledgeSystem:
                 if not rx.search(sent) or (need_street and not self.STREET.search(sent)):
                     continue
                 sent = sent.strip()[:320]
+                # A closure first; then a sentence without figures (old articles carry old
+                # branch and member counts); then the newest-dated page.
                 rank = (bool(re.search(r"\bclos(?:e|ed|es|ing|ure)\b", sent, re.I)),
-                        page.printed_date or "", page.tier, page.key)
+                        not re.search(r"\d", sent), page.printed_date or "", page.tier, page.key)
                 if sent not in found or rank > found[sent][0]:
                     found[sent] = (rank, page)
         if not found:
@@ -411,7 +455,7 @@ class KnowledgeSystem:
                            f"Elsewhere the site says: “{sent}”",
                       sources=self._src(page, sent[:200]),
                       conflict_note=f"From a {rates.authority_name(page.tier)}"
-                                    + (f" dated {rank[1]}" if rank[1] else "") + ", not the branch locator.")
+                                    + (f" dated {rank[2]}" if rank[2] else "") + ", not the branch locator.")
 
     STREET = re.compile(r"\b\d{2,5}\s+(?:[A-Z][\w.']*\s+){1,4}(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Hwy|Highway|"
                         r"Way|Dr|Drive|Ln|Lane|Ct|Court|Pkwy|Parkway)\b")
@@ -442,7 +486,7 @@ class KnowledgeSystem:
         return Answer(text=f"You can call Dupaco at {num}.", sources=self._src(page))
 
     STAT_Q = {
-        "branches": re.compile(r"(?:how many|number of) (?:\w+ ){0,2}(?:branch(?:es)?|locations|offices)\b"
+        "branches": re.compile(r"(?:how many|number of|count of) (?:\w+ ){0,2}(?:branch(?:es)?|locations|offices)\b"
                                r"(?!.*\b(?:close|closed|open(?:ed)?)\b)", re.I),
         "members": re.compile(r"(?:how many|number of) (?:\w+ ){0,2}members\b|how many people (?:belong|bank|are members)\b|"
                               r"\bmember(?:ship)? (?:count|size)\b", re.I),
@@ -468,16 +512,24 @@ class KnowledgeSystem:
                                     "older articles repeat outdated counts.")
 
     def _fee(self, q, view):
-        """'How much is a domestic wire?': answered from fee-schedule rows, never from a passage
-        that only mentions a fee. No matching row -> the general search gets its turn."""
+        """'How much is a domestic wire?': answered from a fee row or not at all. A question
+        that asks for a fee by name and matches no row is declined: the nearest passage that
+        mentions a fee (the card's intro APR footnote, another product's fee) is not an answer."""
         if not fees.INTENT.search(q):
             return None
-        if rates.RATE_INTENT.search(q) and not re.search(r"\bfees?\b", q, re.I):
+        explicit = bool(re.search(r"\bfees?\b", q, re.I))
+        if rates.RATE_INTENT.search(q) and not explicit:
             return None                     # "how much does a certificate pay" is a rate question
         book = self.feebooks[view.snapshot_id]
         rows = book.lookup(q)
+        if not rows and self.interpreter:
+            hint = self._hint(q, view)
+            rows = [f for f in book.facts if f.label == hint.get("fee")][:1]
         if not rows:
-            return None
+            if re.search(r"\b(?:fees?|charges?|costs?)\b", q, re.I) and not rates.MIN_OPEN.search(q.lower()):
+                return Answer(text=REFUSAL, confident=False,
+                              conflict_note="No fee row on the site matches the fee asked about.")
+            return None                     # "how much is…" without a fee word: maybe not a fee at all
         text = "; ".join(f"{f.label[:1].upper()}{f.label[1:]}: {f.amount}" for f in rows) + "."
         pages = list({f.page.key: f.page for f in rows}.values())
         others = sorted({a for f in rows for a in book.other_amounts(f)})
@@ -486,6 +538,18 @@ class KnowledgeSystem:
         return Answer(text=text[:900], conflict_note=note,
                       sources=[Source(url=p.url, snapshot_id=p.snapshot_id,
                                       quote=next(f.text for f in rows if f.page is p)[:200]) for p in pages])
+
+    def _hint(self, question, view) -> dict:
+        """The interpreter's checked reply for this question (kb/interpret.py), asked once."""
+        key = (view.snapshot_id, " ".join(question.lower().split()))
+        if key not in self._hints:
+            catalog = {"products": sorted({f.section.split(" / ")[-1] for f in self.ratebooks[view.snapshot_id].facts}),
+                       "fees": sorted({f.label for f in self.feebooks[view.snapshot_id].facts})}
+            try:
+                self._hints[key] = interpret.checked(self.interpreter(question, catalog), catalog)
+            except Exception:               # an interpreter that fails has no opinion
+                self._hints[key] = {}
+        return self._hints[key]
 
     PROPER = re.compile(r"(?<![.?!]\s)(?<!^)\b([A-Z][a-z]+(?:[\s-][A-Z][a-z]+)*)\b")
 

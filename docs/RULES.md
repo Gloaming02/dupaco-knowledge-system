@@ -32,6 +32,8 @@ values. If any key field differs, they are two different facts.
 2. `as_of = D` → use the **newest snapshot taken on or before D**.
    If D is earlier than the first snapshot, use snapshot 01 and say so in `conflict_note`.
    `as_of` may be an ISO date or timestamp, `MM/DD/YYYY`, or a month ("May 2026" = end of May).
+   A date written only in the question ("as of May 2026", "back in May 2026") counts as `D`
+   when no `as_of` is passed.
 3. Only the chosen snapshot is evidence for the answer. Older snapshots are used only to
    *explain* a change ("was 3.90%, now 4.00%") or to fill `conflicts()`, never as the
    answer itself.
@@ -77,8 +79,9 @@ every crawl, so the crawl date says nothing about freshness. Signals, strongest 
 
 **Boilerplate counts (R3b).** Press releases end with an "About Dupaco" paragraph
 ("…more than 181,000 members… 22 branch office locations"). For company stats (branch count,
-members, employees, assets), take the boilerplate from the **most recently dated** article. When
-dates tie or are missing, the paragraph with the larger member count is the newer one.
+members, employees, assets), take the paragraph with the **largest member count**: membership
+only grows, and many of these paragraphs carry no usable date. The printed date breaks ties.
+(This assumes no merger or drop in membership; it holds for every snapshot here.)
 **Never majority-vote:** in snapshot 05, "23 branch offices" appears 42× and "22" appears 37×,
 and 22 is correct.
 
@@ -129,8 +132,12 @@ branch" text, **no digits at all**) when:
   count as a current rate. A tier-D landing page may answer when it is the only page that lists
   the product and the offer has not ended or been withdrawn (Achieve Money Market).
 - the product is priced by term and the term asked for isn't listed (a 10-year mortgage);
-- the question's key word, or a word in the product's noun phrase, is used nowhere on the
-  site's product pages ("SWIFT code", "crypto savings account").
+- the question's key word is used nowhere on the site ("SWIFT code");
+- a fee is asked for by name and no fee row matches it.
+
+An unfamiliar word in a product's name is **not** a reason to refuse: "pontoon boat loan" is
+a boat loan. Telling that apart from a product the site lacks ("premium money market") is
+left to the optional interpreter (`kb/interpret.py`), not to a word list.
 
 A fee is answered only from a fee row whose label the question names (`kb/fees.py`), never
 from a passage that mentions a fee: "cash advance fee" must not return the 2.90% intro APR

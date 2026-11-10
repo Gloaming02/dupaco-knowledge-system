@@ -37,7 +37,7 @@ SYNONYMS = {
 GENERIC = set("""what whats is the a an for on of my your you do does are rate rates apy apr interest
 dividend yield annual percentage current currently today now right please tell me give can could
 how much get earn pay pays paying with between and or to in at month months year years model
-mo mos yr yrs
+mo mos yr yrs day days week weeks
 dupaco dupacos offer offers have account accounts loan loans balance standard purchase new
 s i about at any their there they them which who also like would want know need looking
 wondering tell show list all some much many kind kinds type types option options available
@@ -50,29 +50,6 @@ any both all nor into onto through from by about against between among per via m
 ours he she him her his hers they them their theirs i me you your yours one ones thing things
 """.split())
 HEAD = re.compile(r"\b([a-z]+)(?:[\s-]+rate)?[\s-]+(?:loans?|mortgages?|accounts?|cards?|certificates?|lines? of credit)\b")
-PRODUCT_NOUN = re.compile(r"loans?|mortgages?|accounts?|cards?|certificates?|credit")
-
-
-def _outer_words(q: str) -> list:
-    """Words of the noun phrase in front of a product noun, beyond the one right before it:
-    "crypto" in "crypto savings account", "quantum" in "quantum money market account". The
-    phrase ends at a number or at a word that describes the question, not the product."""
-    toks = re.findall(r"[a-z]+|\d+", q)
-    out = []
-    for i, t in enumerate(toks):
-        if not PRODUCT_NOUN.fullmatch(t):
-            continue
-        def describes_product(t):
-            return t.isalpha() and t not in GENERIC and t not in SUPERLATIVE and t not in NUMBER_WORDS
-        if i == 0 or not describes_product(toks[i - 1]):
-            continue                                # "six month certificate": the phrase is a term
-        j = i - 2                                   # i - 1 is the direct modifier (HEAD)
-        while j >= 0 and describes_product(toks[j]) and i - j <= 4:
-            out.append(toks[j])
-            j -= 1
-    return out
-
-
 LISTING = re.compile(r"\b(offer|offers|options|all|types|kinds|list|cards|loans|accounts|certificates)\b", re.I)
 AUDIENCE_WORDS = {"business", "roth", "traditional", "ira", "personal"}
 VARIANTS = ("jumbo", "refinance", "variable", "heloc", "intro")
@@ -84,7 +61,15 @@ NEW_VEHICLE = re.compile(rf"\b(?:brand[- ])?new (?:model[- ]year )?{VEHICLE}\b")
 # A calendar date ("in May 2026", "as of 09/28/2026") is when, not a model year.
 DATED = re.compile(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:\d{1,2},?\s+)?(?:19|20)\d\d\b"
                    r"|\b\d{1,2}/\d{1,2}/(?:19|20)\d\d\b|\b(?:in|of|since|during)\s+(?:19|20)\d\d\b")
-THOUSANDS = re.compile(r"\$?\s?(\d+(?:\.\d+)?)\s?k\b")
+# Every way of writing an amount is rewritten to "$N" once, before anything else reads it.
+MILLIONS = re.compile(r"(?<![\d.,])\$?\s?(\d+(?:\.\d+)?)\s?(?:million|mil|mm)\b")
+THOUSANDS = re.compile(r"(?<![\d.,])\$?\s?(?!40[13]\s?k)(\d+(?:\.\d+)?)\s?(?:k|thousand|grand)\b")      # not "401k"
+DOLLARS = re.compile(r"(?<![$\d,.])(\d{1,3}(?:,\d{3})+|\d{4,})(?:\.\d+)?\s?(?:dollars?|bucks|usd)\b")
+BELOW = re.compile(r"\b(?:under|below|less than|shy of|short of)\s*$")
+ABOVE = re.compile(r"\b(?:over|above|more than|exceeding|north of)\s*$")
+# "How much do I need to open…", "minimum deposit": the opening minimum, not a rate.
+MIN_OPEN = re.compile(r"\b(?:minimum|min)\b.*\b(?:open|opening|deposit|balance)\b|"
+                      r"\bhow much\b.*\bto (?:open|start|get started)\b|\bopening (?:deposit|balance)\b")
 
 
 HOME_LOAN = re.compile(r"\b(?:home|house) loans?\b")   # a mortgage; not home equity / home improvement
@@ -112,7 +97,7 @@ class RateQuery:
     superlative: Optional[str] = None      # highest | lowest
     asks_number: bool = False              # explicitly asks for a rate/APY/APR value
     modifiers: list = None                 # words right before a product noun
-    outer: list = None                     # the word before that ("crypto" in "crypto savings account")
+    min_open: bool = False                 # asks for the minimum to open, not a rate
     listing: bool = False                  # 'what X do you offer' / plural 'rates for the cards'
     newest: bool = False                   # "a new car": the newest model-year band only
 
@@ -122,7 +107,10 @@ PHRASES = [(re.compile(r"\bshare (certificates?)\b"), r"\1"),          # credit-
            (re.compile(r"\bterm[- ]share\b"), "certificate"),
            (HOME_LOAN, "mortgage"),
            (re.compile(r"\bhsas?\b"), "health savings account"),
-           (THOUSANDS, lambda m: f"${float(m.group(1)) * 1000:,.0f}")]     # "$15k" -> "$15,000"
+           (MILLIONS, lambda m: f"${float(m.group(1)) * 1_000_000:,.0f}"),  # "$1 million" -> "$1,000,000"
+           (THOUSANDS, lambda m: f"${float(m.group(1)) * 1000:,.0f}"),      # "$15k" -> "$15,000"
+           (DOLLARS, lambda m: f"${m.group(1)}"),                           # "250000 dollars" -> "$250000"
+           (re.compile(r"\bat (?:least|most)\b"), " ")]                     # a bound, not a superlative
 
 
 def parse(question: str) -> Optional[RateQuery]:
@@ -130,19 +118,19 @@ def parse(question: str) -> Optional[RateQuery]:
     for rx, rep in PHRASES:
         q = rx.sub(rep, q)
     by_term = bool(TERM_PRODUCT.search(q)) and term_months(q) is not None
-    if not (RATE_INTENT.search(q) or by_term) or NOT_RATE.search(q):
+    min_open = bool(MIN_OPEN.search(q))
+    if not (RATE_INTENT.search(q) or by_term or min_open) or NOT_RATE.search(q):
         return None
     # Audience words are a separate filter (rule R4), not part of the product name.
     raw = [w for w in WORD.findall(q) if _stem(w) not in GENERIC and w not in GENERIC
            and (w not in AUDIENCE_WORDS or w == "personal") and w not in ("iras", "retirement")]
-    rq = RateQuery(product=[_stem(w) for w in raw])
+    rq = RateQuery(product=[_stem(w) for w in raw], min_open=min_open)
     rq.modifiers = [m.group(1) for m in HEAD.finditer(q)
                     if m.group(1) not in GENERIC and m.group(1) not in SUPERLATIVE]
-    rq.outer = _outer_words(q)
     rq.listing = bool(LISTING.search(q)) or bool(re.search(r"\b(rates|apys|aprs)\b", q))
     rq.term = term_months(q)
     rq.asks_number = (by_term or bool(re.search(r"\b(rates?|apys?|aprs?|interest rates?|dividend rates?)\b", q))
-                      or bool(re.search(r"\bhow much\b.*\b(?:pays?|earns?|yields?)\b", q))) \
+                      or bool(re.search(r"\b(?:how much|what)\b.*\b(?:pays?|earns?|yields?)\b", q))) \
         and not re.search(r"\b(any|which)\b", q)
     # A year next to a loan or a vehicle is a model year ("a 2026 Honda Civic for 60 months").
     if (m := re.search(r"\b(19[89]\d|20[0-3]\d)\b", DATED.sub(" ", q))) and \
@@ -155,6 +143,9 @@ def parse(question: str) -> Optional[RateQuery]:
         rq.amount = (float(m.group(1).replace(",", "")), float(m.group(2).replace(",", "")))
     elif (m := re.search(r"\$\s?(\d[\d,]*(?:\.\d+)?)", q)):
         v = float(m.group(1).replace(",", ""))
+        before = q[:m.start()]
+        # "just under $25,000" is the tier below $25,000; "more than $25,000" the tier above.
+        v = v - 0.01 if BELOW.search(before) else v + 0.01 if ABOVE.search(before) else v
         rq.amount = (v, v)
     if "apy" in q or "annual percentage yield" in q or re.search(r"\byield", q):
         rq.metric = "apy"
@@ -169,7 +160,8 @@ def parse(question: str) -> Optional[RateQuery]:
         rq.ira_kind = "roth" if "roth" in q else ("traditional" if "traditional" in q else None)
     rq.variants = frozenset(v for v in VARIANTS if v in q or (v == "refinance" and "refi" in q)
                             or (v == "intro" and re.search(r"\bpromo|balance transfer", q)))
-    rq.superlative = next((kind for w, kind in SUPERLATIVE.items() if re.search(rf"\b{w}\b", q)), None)
+    rq.superlative = None if min_open else next(
+        (kind for w, kind in SUPERLATIVE.items() if re.search(rf"\b{w}\b", q)), None)
     return rq
 
 
@@ -215,10 +207,9 @@ class RateBook:
     `site_df(word)` gives the share of the snapshot's passages that use a word, which tells a
     product term ("construction", "adjustable") apart from filler ("was", "provide")."""
 
-    def __init__(self, facts: list, site_df=None, withdrawn=(), on_product_pages=None):
+    def __init__(self, facts: list, site_df=None, withdrawn=()):
         self.facts = facts
         self.site_df = site_df or (lambda w: 0.0)
-        self.on_product_pages = on_product_pages or (lambda w: True)
         df = Counter()
         self._words = []
         for f in facts:
@@ -244,15 +235,13 @@ class RateBook:
         out += [_stem(w) for w in rq.modifiers if _stem(w) not in self.idf]
         return list(dict.fromkeys(out))
 
-    def _unlisted(self, rq) -> list:
-        """Words one step further out in the product's noun phrase ("crypto savings account",
-        "quantum money market account") that no rate table and no product page on the site
-        uses: the question is about a product the credit union does not list (rule R6).
-        A word the product pages do use is description ("used car loan", "short-term personal
-        loan"), and with a model year the phrase describes a vehicle."""
-        if rq.year:
-            return []
-        return [w for w in (rq.outer or []) if _stem(w) not in self.idf and not self.on_product_pages(w)]
+    def unbound(self, rq) -> list:
+        """Words of the question that name something, and that no rate table uses: "pontoon",
+        "camper", "premium". The rules cannot tell a description ("pontoon boat loan") from a
+        product the site does not list ("premium money market"), so they do not guess from the
+        word: they answer what they can bind and report these words, and an interpreter, when
+        one is configured, decides (see kb/interpret.py)."""
+        return [w for w in rq.product if w not in self.idf and w not in NUMBER_WORDS and len(w) > 2]
 
     def _w(self, w: str) -> float:
         return self.idf.get(w, self._unknown)
@@ -265,8 +254,6 @@ class RateBook:
 
     def lookup(self, rq: RateQuery):
         """Return (winning facts from one page, all candidate facts) or (None, candidates)."""
-        if self._unlisted(rq):
-            return None, []
         if rq.term:
             # A product priced by term (15/20/30-year mortgages) has no rate for a term it doesn't
             # list: a 10-year mortgage must not fall through to another product's 120-month row.

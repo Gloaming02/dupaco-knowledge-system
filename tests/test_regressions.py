@@ -115,7 +115,17 @@ class Fees(unittest.TestCase):
         self.assertEqual(labels("What is the late payment fee on the Platinum card?"), ["late payment fee"])
         self.assertEqual(labels("What's the sweep fee for my business?"), ["Sweep Fee"])
         self.assertEqual(labels("What's the sweep fee?"), [])                      # a business fee, not asked as one
-        self.assertEqual(labels("What is the annual fee?"), [])                    # no such row: no answer
+        self.assertEqual(labels("What is the annual fee?"), ["annual fee"])        # "There is no annual fee"
+        self.assertIn("none", book.lookup("What is the annual fee?")[0].amount)
+        self.assertEqual(labels("What's the fee for a returned check?"), [])       # not the "returned payment fee"
+        self.assertEqual(labels("What is the fee for a paper statement?"), [])     # no such row: no answer
+
+    def test_a_fee_is_not_moved_to_another_product(self):
+        priced = {"auto", "mortgage", "platinum"}
+        book = fees.FeeBook(SnapshotView("s1", "2026-01-01", {"c": page("https://x.test/cards", self.PROSE, tier=4)}),
+                            product_of=lambda w: w if w in priced else None)
+        self.assertEqual([f.label for f in book.lookup("What is the late payment fee on the Platinum card?")], ["late payment fee"])
+        self.assertEqual(book.lookup("What's the late payment fee on my auto loan?"), [])
 
 
 class SyntheticSite(unittest.TestCase):
@@ -188,6 +198,16 @@ class Dupaco(unittest.TestCase):
         self.says("What's the APR on a $20,001 home improvement loan?", "8.75%", never=["8.50%"])
         self.says("What dividend rate do I earn on Share Savings with a balance between $10,000 and $24,999?", "0.15")
 
+    def test_amounts_however_they_are_written(self):
+        self.says("What does High-Yield Savings pay on $1 million?", "2.45%", never=["1.50%"])
+        self.says("What does High-Yield Savings pay on 250000 dollars?", "2.05%", never=["1.50%"])
+        self.says("What's the HSA APY if I keep just under $25,000?", "0.30%", never=["0.35%"])
+        self.says("What's the Share Savings APY for a balance of at least $25,000?", "0.20%", never=["0.15%"])
+        self.declines("What does Launchpad Savings pay on $1,500?")                       # the tier ends at $1,000
+
+    def test_opening_minimum_is_not_a_rate(self):
+        self.says("How much do I need to open a High-Yield Savings account?", "50,000", never=["1.50%"])
+
     def test_term_unit_is_not_a_product_word(self):
         self.says("I'm buying a 2025 Toyota — what's your 60 mo rate?", "5.39%", never=["6.74%"])
 
@@ -204,6 +224,16 @@ class Dupaco(unittest.TestCase):
         self.says("What is the late payment fee on the Platinum Visa?", "$15.00", never=["$35.00"])
         self.says("What's the late fee on a business credit card?", "$35.00", never=["$15.00"])
         self.says("How much does a 6 month share certificate pay?", "3.40%")             # a rate, not a fee
+        self.says("What is the fee for drilling a safe deposit box?", "$175.00", never=["$25.00"])
+        self.says("What's the late fee on a safe deposit box?", "$10.00", never=["$25.00"])
+        self.says("How much does it cost to rent a 5x10 safe deposit box?", "$60.00", never=["$25.00", "$40.00"])
+        self.says("Is there an annual fee on the Platinum Visa?", "no annual fee", never=["2.90%"])
+        self.says("How much is a cashier's check?", "$5.00")
+
+    def test_a_fee_the_site_does_not_list_is_declined(self):
+        for q in ("What's the late fee on my auto loan?", "What's the fee for a returned check?",
+                  "How much is the mortgage application fee?", "What does it cost to order checks?"):
+            self.declines(q)
 
     # -- time -------------------------------------------------------------------------------
     def test_mortgage_apr_is_not_the_points_column(self):
@@ -213,6 +243,12 @@ class Dupaco(unittest.TestCase):
         q = "What is the 60 month auto loan APR for a 2025 car?"
         self.says(q, "5.19%", never=["5.39%"], as_of="May 2026")
         self.says(q, "5.39%", never=["5.19%"])
+
+    def test_date_written_in_the_question(self):
+        self.says("What was the 60-month auto loan APR for a 2025 car as of May 2026?", "5.19%", never=["5.39%"])
+        self.says("What was the 12-month certificate APY back in May 2026?", "2.90%", never=["3.40%"])
+        # the as_of argument wins over the wording
+        self.says("What was the 12-month certificate APY back in May 2026?", "3.40%", as_of="2026-09-28")
 
     def test_as_of_before_the_first_snapshot_is_flagged(self):
         ans = self.ks.answer("What is the 60 month auto loan APR for a 2025 car?", "2025-01-01")
@@ -232,18 +268,48 @@ class Dupaco(unittest.TestCase):
         self.declines("what are the lobby hours for the mullan avenue branch")
         self.declines("What are the hours for the Key West branch?")
 
-    def test_product_or_term_the_site_never_mentions(self):
-        self.declines("How much does a crypto savings account pay?")
-        self.declines("What's the APY on a quantum money market account?")
+    def test_term_the_site_never_mentions(self):
         self.declines("What's the swift code for Dupaco?")
-        self.says("What's the rate on a used car loan?", "5.39%")                         # description, not a product
-        self.says("What's the rate for a short-term personal loan?", "9.99%")
+
+    def test_unfamiliar_words_do_not_cause_a_refusal(self):
+        self.says("What's the APR for a pontoon boat loan of $45,000 for 120 months?", "9.34%")
+        self.says("What's the APY on a rainy-day Share Savings account with $3,000?", "0.10%")
+        self.says("What's the rate on a used car loan?", "5.39%")
+
+    def test_interpreter_decides_what_the_rules_cannot_bind(self):
+        """The optional second tier (kb/interpret.py), here with a stand-in for a model."""
+        ks = build(DUPACO)
+        asked = []
+
+        def fake(question, catalog):
+            asked.append(question)
+            if "camper" in question:
+                return {"product": "Boat & RV Loans"}
+            if "premium" in question:
+                return {"listed": False}
+            if "abroad" in question:
+                return {"fee": "International wire transfer"}
+            if "bogus" in question:
+                return {"product": "Not In The Catalog"}             # ignored: not a catalog entry
+            raise RuntimeError("model unavailable")                  # ignored: the rules' answer stands
+
+        ks.interpreter = fake
+        self.assertTrue(contains(ks.answer("What's the APR on a camper loan for $30,000 over 60 months?").text, "7.09%"))
+        self.assertFalse(ks.answer("How much does a premium money market account pay?").confident)
+        self.assertTrue(contains(ks.answer("What is the fee to send money abroad?").text, "$55.00"))
+        self.assertTrue(contains(ks.answer("What's the APR on a bogus pontoon boat loan of $45,000 for 120 months?").text, "9.34%"))
+        self.assertTrue(contains(ks.answer("What's the APR for a pontoon boat loan of $45,000 for 120 months?").text, "9.34%"))
+        # a question the rules bind completely never reaches the interpreter
+        ks.answer("What is the APR on a 36-month personal loan?")
+        self.assertFalse([q for q in asked if "36-month" in q])
 
     # -- branches ---------------------------------------------------------------------------
     def test_branch_outside_the_crawled_locator(self):
         ans = self.says("Is there a branch in Madison?", "Mineral Point")
         self.assertTrue(ans.confident)
         self.assertFalse(self.ks.answer("Is there a branch in Chicago?").confident)
+        self.says("Does Dupaco have a location in Madison?", "Mineral Point", never=["151,000"])   # other wording
+        self.says("is there a branch in waterloo?", "Mullan")                                      # lower case
         self.says("Do you have a branch in Asbury?", "closing")                           # closure outranks mentions
         self.says("What is the address of the Dyersville branch?", "807 Ninth St. SE")
         self.declines("What's the address of the Platteville branch?")                    # not an ATM's address

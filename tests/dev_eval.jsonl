@@ -1,0 +1,50 @@
+{"id": "dev-001", "question": "What does High-Yield Savings pay on $1 million?", "category": "answer", "must_include": ["2.45%"], "must_not_include": ["1.50%"]}
+{"id": "dev-002", "question": "What does High-Yield Savings pay on 250000 dollars?", "category": "answer", "must_include": ["2.05%"], "must_not_include": ["1.50%", "2.45%"]}
+{"id": "dev-003", "question": "What's the HSA APY if I keep just under $25,000?", "category": "answer", "must_include": ["0.30%"], "must_not_include": ["0.35%"]}
+{"id": "dev-004", "question": "What's the Share Savings APY for a balance of at least $25,000?", "category": "answer", "must_include": ["0.20%"], "must_not_include": ["0.15%"]}
+{"id": "dev-005", "question": "What does Launchpad Savings pay on $1,500?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-006", "question": "Is there an annual fee on the Platinum Visa?", "category": "answer", "must_include": ["no annual fee"], "must_not_include": ["2.90%"]}
+{"id": "dev-007", "question": "What's the balance transfer fee on the Platinum Visa?", "category": "answer", "must_include": ["no balance transfer fee"], "must_not_include": ["2.90%"]}
+{"id": "dev-008", "question": "What is the fee for drilling a safe deposit box?", "category": "answer", "must_include": ["$175.00"], "must_not_include": ["$25.00", "$35.00"]}
+{"id": "dev-009", "question": "What's the late fee on a safe deposit box?", "category": "answer", "must_include": ["$10.00"], "must_not_include": ["$25.00", "$35.00"]}
+{"id": "dev-010", "question": "What's the fee for a lost safe deposit box key?", "category": "answer", "must_include": ["$100.00"], "must_not_include": ["$35.00", "$60.00"]}
+{"id": "dev-011", "question": "How much does it cost to rent a 5x10 safe deposit box?", "category": "answer", "must_include": ["$60.00"], "must_not_include": ["$25.00", "$35.00", "$40.00"]}
+{"id": "dev-012", "question": "How much does it cost to send money abroad?", "category": "answer", "must_include": ["$55.00"], "must_not_include": ["$5.00"]}
+{"id": "dev-013", "question": "What do you charge to wire money within the US?", "category": "answer", "must_include": ["$25.00"], "must_not_include": ["$5.00"]}
+{"id": "dev-014", "question": "What's the cost of sending a wire domestically?", "category": "answer", "must_include": ["$25.00"], "must_not_include": []}
+{"id": "dev-015", "question": "What does it cost to order checks?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-016", "question": "How much is it to replace a lost debit card?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-017", "question": "What's the late fee on my auto loan?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-018", "question": "What's the fee for a returned check?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-019", "question": "How much is the mortgage application fee?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-020", "question": "Is there a fee to close my account early?", "category": "answer", "must_include": ["$25.00"], "must_not_include": []}
+{"id": "dev-021", "question": "How much is bill pay?", "category": "answer", "must_include": ["$0.50"], "must_not_include": []}
+{"id": "dev-022", "question": "How much is a cashier's check?", "category": "answer", "must_include": ["$5.00"], "must_not_include": []}
+{"id": "dev-023", "question": "What is the ATM fee?", "category": "answer", "must_include": ["$0.50"], "must_not_include": []}
+{"id": "dev-024", "question": "What does it cost to use a Dupaco ATM?", "category": "answer", "must_include": ["Free"], "must_not_include": []}
+{"id": "dev-025", "question": "How much does Dupaco charge for paper statements?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-026", "question": "How much do I need to open a High-Yield Savings account?", "category": "answer", "must_include": ["50,000"], "must_not_include": []}
+{"id": "dev-027", "question": "Does Dupaco have a location in Madison?", "category": "answer", "must_include": ["Mineral Point"], "must_not_include": ["151,000"]}
+{"id": "dev-028", "question": "Where is the Manchester branch located?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-029", "question": "What rate does a kids club savings account pay?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-030", "question": "How much does a premium money market account pay?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-031", "question": "What's the interest rate on a secured credit card?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-032", "question": "What is the bitcoin rewards rate?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-033", "question": "Do you offer a reverse mortgage?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-034", "question": "What is the APY on an online savings account?", "category": "answer", "must_include": ["2.25%"], "must_not_include": ["0.15%", "0.20%"]}
+{"id": "dev-035", "question": "What's the APR for a pontoon boat loan of $45,000 for 120 months?", "category": "answer", "must_include": ["9.34%"], "must_not_include": []}
+{"id": "dev-036", "question": "What's the APY on a rainy-day Share Savings account with $3,000?", "category": "answer", "must_include": ["0.10%"], "must_not_include": []}
+{"id": "dev-037", "question": "What's the APR on a camper loan for $30,000 over 60 months?", "category": "answer", "must_include": ["7.09%"], "must_not_include": []}
+{"id": "dev-038", "question": "What was the 60-month auto loan APR for a 2025 car as of May 2026?", "category": "answer", "must_include": ["5.19%"], "must_not_include": ["5.39%"]}
+{"id": "dev-039", "question": "What was the 12-month certificate APY back in May 2026?", "category": "answer", "must_include": ["2.90%"], "must_not_include": ["3.40%"]}
+{"id": "dev-040", "question": "What is the URL for the rates page?", "category": "answer", "must_include": ["dupaco.com/rates"], "must_not_include": []}
+{"id": "dev-041", "question": "What's the count of Dupaco branch offices?", "category": "answer", "must_include": ["22"], "must_not_include": ["23", "24"]}
+{"id": "dev-042", "question": "What's the weather in Dubuque?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-043", "question": "What's Dupaco's stock price?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-044", "question": "What's the lease rate for a 2025 car?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-045", "question": "What is the penalty APR on the Rewards Visa?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-046", "question": "What is the daily ATM withdrawal limit?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-047", "question": "What's Chase Bank's routing number?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-048", "question": "Tell me a joke", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-049", "question": "Who won the Super Bowl?", "category": "should_refuse", "must_include": [], "must_not_include": []}
+{"id": "dev-050", "question": "Do you offer a 5/1 ARM?", "category": "should_refuse", "must_include": [], "must_not_include": []}
