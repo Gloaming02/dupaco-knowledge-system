@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from typing import Optional
 
 from .authority import NAMES
-from .facts import INF, MONEY_RANGE, RateFact, term_months
+from .facts import INF, MONEY_RANGE, NUMBER_WORDS, RateFact, term_months
 
 
 def authority_name(tier: int) -> str:
@@ -37,6 +37,7 @@ SYNONYMS = {
 GENERIC = set("""what whats is the a an for on of my your you do does are rate rates apy apr interest
 dividend yield annual percentage current currently today now right please tell me give can could
 how much get earn pay pays paying with between and or to in at month months year years model
+mo mos yr yrs
 dupaco dupacos offer offers have account accounts loan loans balance standard purchase new
 s i about at any their there they them which who also like would want know need looking
 wondering tell show list all some much many kind kinds type types option options available
@@ -49,6 +50,29 @@ any both all nor into onto through from by about against between among per via m
 ours he she him her his hers they them their theirs i me you your yours one ones thing things
 """.split())
 HEAD = re.compile(r"\b([a-z]+)(?:[\s-]+rate)?[\s-]+(?:loans?|mortgages?|accounts?|cards?|certificates?|lines? of credit)\b")
+PRODUCT_NOUN = re.compile(r"loans?|mortgages?|accounts?|cards?|certificates?|credit")
+
+
+def _outer_words(q: str) -> list:
+    """Words of the noun phrase in front of a product noun, beyond the one right before it:
+    "crypto" in "crypto savings account", "quantum" in "quantum money market account". The
+    phrase ends at a number or at a word that describes the question, not the product."""
+    toks = re.findall(r"[a-z]+|\d+", q)
+    out = []
+    for i, t in enumerate(toks):
+        if not PRODUCT_NOUN.fullmatch(t):
+            continue
+        def describes_product(t):
+            return t.isalpha() and t not in GENERIC and t not in SUPERLATIVE and t not in NUMBER_WORDS
+        if i == 0 or not describes_product(toks[i - 1]):
+            continue                                # "six month certificate": the phrase is a term
+        j = i - 2                                   # i - 1 is the direct modifier (HEAD)
+        while j >= 0 and describes_product(toks[j]) and i - j <= 4:
+            out.append(toks[j])
+            j -= 1
+    return out
+
+
 LISTING = re.compile(r"\b(offer|offers|options|all|types|kinds|list|cards|loans|accounts|certificates)\b", re.I)
 AUDIENCE_WORDS = {"business", "roth", "traditional", "ira", "personal"}
 VARIANTS = ("jumbo", "refinance", "variable", "heloc", "intro")
@@ -88,6 +112,7 @@ class RateQuery:
     superlative: Optional[str] = None      # highest | lowest
     asks_number: bool = False              # explicitly asks for a rate/APY/APR value
     modifiers: list = None                 # words right before a product noun
+    outer: list = None                     # the word before that ("crypto" in "crypto savings account")
     listing: bool = False                  # 'what X do you offer' / plural 'rates for the cards'
     newest: bool = False                   # "a new car": the newest model-year band only
 
@@ -113,9 +138,11 @@ def parse(question: str) -> Optional[RateQuery]:
     rq = RateQuery(product=[_stem(w) for w in raw])
     rq.modifiers = [m.group(1) for m in HEAD.finditer(q)
                     if m.group(1) not in GENERIC and m.group(1) not in SUPERLATIVE]
+    rq.outer = _outer_words(q)
     rq.listing = bool(LISTING.search(q)) or bool(re.search(r"\b(rates|apys|aprs)\b", q))
     rq.term = term_months(q)
-    rq.asks_number = (by_term or bool(re.search(r"\b(rates?|apys?|aprs?|interest rates?|dividend rates?)\b", q))) \
+    rq.asks_number = (by_term or bool(re.search(r"\b(rates?|apys?|aprs?|interest rates?|dividend rates?)\b", q))
+                      or bool(re.search(r"\bhow much\b.*\b(?:pays?|earns?|yields?)\b", q))) \
         and not re.search(r"\b(any|which)\b", q)
     # A year next to a loan or a vehicle is a model year ("a 2026 Honda Civic for 60 months").
     if (m := re.search(r"\b(19[89]\d|20[0-3]\d)\b", DATED.sub(" ", q))) and \
@@ -146,6 +173,24 @@ def parse(question: str) -> Optional[RateQuery]:
     return rq
 
 
+def _in_band(band: tuple, asked: tuple) -> bool:
+    """Is the amount asked about inside this balance / loan-amount tier?
+
+    Tiers are printed as "$10,000 – $24,999.99" (or "…-24,999"), which means "from 10,000 up to,
+    but not including, 25,000". So the upper end of a band is the next whole dollar, exclusive:
+    $25,000 belongs to "$25,000+", never to the tier below it.
+
+    A single amount must fall inside the band exactly. A range ("between $10,000 and $24,999",
+    "$10,000 to $25,000") names a tier by its printed ends, so each end may be off by a dollar.
+    """
+    b_lo, b_hi = band
+    lo, hi = asked
+    top = INF if b_hi == INF else math.floor(b_hi) + 1      # first amount that is in the next tier
+    if lo == hi:
+        return b_lo <= lo < top
+    return b_lo - 1 <= lo and hi <= top
+
+
 def _fits(f: RateFact, rq: RateQuery) -> bool:
     """Hard constraints: an explicit qualifier in the question must not be contradicted."""
     if f.audience != rq.audience and not (rq.listing and rq.audience == "personal" and f.audience == "business"):
@@ -156,10 +201,8 @@ def _fits(f: RateFact, rq: RateQuery) -> bool:
         return False
     if rq.year and f.years and not (f.years[0] <= rq.year <= f.years[1]):
         return False
-    if rq.amount and f.amount:
-        lo, hi = rq.amount
-        if not (f.amount[0] - 1 <= lo and hi <= f.amount[1] + 1):
-            return False
+    if rq.amount and f.amount and not _in_band(f.amount, rq.amount):
+        return False
     for v in VARIANTS:
         if (v in rq.variants) != (v in f.flags):
             if v in rq.variants:
@@ -172,9 +215,10 @@ class RateBook:
     `site_df(word)` gives the share of the snapshot's passages that use a word, which tells a
     product term ("construction", "adjustable") apart from filler ("was", "provide")."""
 
-    def __init__(self, facts: list, site_df=None, withdrawn=()):
+    def __init__(self, facts: list, site_df=None, withdrawn=(), on_product_pages=None):
         self.facts = facts
         self.site_df = site_df or (lambda w: 0.0)
+        self.on_product_pages = on_product_pages or (lambda w: True)
         df = Counter()
         self._words = []
         for f in facts:
@@ -200,6 +244,16 @@ class RateBook:
         out += [_stem(w) for w in rq.modifiers if _stem(w) not in self.idf]
         return list(dict.fromkeys(out))
 
+    def _unlisted(self, rq) -> list:
+        """Words one step further out in the product's noun phrase ("crypto savings account",
+        "quantum money market account") that no rate table and no product page on the site
+        uses: the question is about a product the credit union does not list (rule R6).
+        A word the product pages do use is description ("used car loan", "short-term personal
+        loan"), and with a model year the phrase describes a vehicle."""
+        if rq.year:
+            return []
+        return [w for w in (rq.outer or []) if _stem(w) not in self.idf and not self.on_product_pages(w)]
+
     def _w(self, w: str) -> float:
         return self.idf.get(w, self._unknown)
 
@@ -211,6 +265,8 @@ class RateBook:
 
     def lookup(self, rq: RateQuery):
         """Return (winning facts from one page, all candidate facts) or (None, candidates)."""
+        if self._unlisted(rq):
+            return None, []
         if rq.term:
             # A product priced by term (15/20/30-year mortgages) has no rate for a term it doesn't
             # list: a 10-year mortgage must not fall through to another product's 120-month row.

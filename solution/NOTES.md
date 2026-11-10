@@ -49,18 +49,23 @@ The short version:
    - a rate question matches no current rate table,
    - the product is priced by term and the term asked for isn't listed (a 10-year mortgage),
    - an unknown word modifies the product noun ("**construction** loan", "**adjustable**-rate mortgage"),
-   - a named branch has no posted hours, or
-   - a named entity appears nowhere on the site.
+   - a word further out in the product's noun phrase is used by no rate table and no product
+     page ("**crypto** savings account"); words the product pages do use are description
+     ("used car loan"),
+   - a named branch has no posted hours,
+   - a named entity appears nowhere on the site, or
+   - the question's key word appears nowhere on the site ("SWIFT code").
 
 ## Answer paths (`solution.py`)
 
 | Route | When | Source of truth |
 |---|---|---|
-| link | "what link / URL / website…" | every link on the site, scored by anchor text, URL and what the target page lists; dead or legacy targets lose |
+| link | "what link / URL / website…", or where/how to do something online | every link on the site, scored by anchor text, URL and what the target page lists; dead or legacy targets lose |
 | hours | "hours" | lobby/drive-up blocks found on the site: the common schedule plus variants, then ask which branch |
-| address / branch in X | "address of the X branch", "branch in X" | the `/contact` branch locator |
+| address / branch in X | "address of the X branch", "branch in X" | the `/contact` branch locator first. The crawled locator is a map widget with only part of the branch list (6 of 22), so a place it lacks is looked up in the rest of the site: the newest-dated sentence that speaks of a branch there, a closure announcement first. The answer says it is not from the locator |
 | phone | "phone / call" | the toll-free number repeated most on non-editorial pages |
 | stats | "how many branches / members / employees", "assets" | newest boilerplate (R3b) |
+| fees | "fee / charge / cost / how much is…" | `kb/fees.py`: fee-schedule rows (table or plain-text layout) and card disclosure sentences as (label, amount) facts. A row answers only when the question names at least half of its label; a family ("wire") lists its members; otherwise the question moves on |
 | rates | rate/APY/APR intent | `kb/rates.py`, the structured fact lookup (below); "did it change?" questions also get a dated history |
 | passage | everything else | BM25 → one winning page → best passage plus neighbouring paragraphs |
 
@@ -69,8 +74,9 @@ explicit qualifier. Score product similarity with IDF-weighted word overlap (wit
 synonyms: car→auto, CD→certificate, home loan→mortgage). Then let **one page** win by
 (present in crawl, authority, printed date) and answer only from that page, so stale copies can
 never leak into the text. A dollar amount selects the tightest tier that contains it
-("$300,000 or less", not also "$832,750 or less"), and "a new car" selects the newest
-model-year band. Product pages that show the same row with the same value are cited next to
+("$300,000 or less", not also "$832,750 or less"). A tier printed "$10,000 – $24,999.99" runs
+up to, not including, the next whole dollar, so $25,000 is in "$25,000+" and never in the
+tier below. "A new car" selects the newest model-year band. Product pages that show the same row with the same value are cited next to
 the rate sheet. Questions that ask for several products ("what cards do you offer")
 get one winning page per audience.
 
@@ -108,9 +114,11 @@ boilerplate conflict is reported too.
   under the paraphrase set below. No conflict gold is shipped
   for the public set.
 - **Stress tests** (`tests/`), written because the hidden set is larger and reworded:
-  - `test_regressions.py` (`python -m unittest discover tests`): 20 asserting tests, one per
-    wrong answer found in review: wrong tier, wrong snapshot, a withdrawn offer, a missing
-    refusal, merged conflicts. The synthetic-site tests run from a bare clone.
+  - `test_regressions.py` (`python -m unittest discover tests`): 33 asserting tests, one per
+    wrong answer found in review: wrong tier, a balance on a tier boundary, wrong snapshot, a
+    withdrawn offer, a missing refusal, a fee taken from the wrong passage, a branch missing
+    from the locator, merged conflicts. The synthetic-site, tier-boundary and fee-parsing
+    tests (10) run from a bare clone.
   - `paraphrase_eval.jsonl`: two rewordings of each of the 40 public questions, grouped with
     the original (120 items). qa 0.88, paraphrase consistency 0.87, 0 stale hits. The misses
     are the four free-text questions the public eval also misses, in all three wordings
@@ -133,11 +141,18 @@ boilerplate conflict is reported too.
 
 ## Known limits / next steps
 
-- **Free text is the weak part.** Questions outside rates, hours, branches and company stats
-  get the best BM25 passage, and three public questions fail there: the Forbes answer comes
+- **Free text is the weak part.** Questions outside rates, fees, hours, branches and company
+  stats get the best BM25 passage, and three public questions fail there: the Forbes answer comes
   from the right article but not the sentence that says "fifth time", the eligibility question
   lands on a loan page, and the Volunteer Time Off question takes the newer article's figure.
-  Fees, eligibility and news are not structured into facts the way rates are.
+  Eligibility and news are not structured into facts the way rates and fees are.
+- **Things the site doesn't have can still get an answer.** Refusal works when the missing
+  thing is a product in a noun phrase or a word the site never uses. It does not work when
+  the words exist on the site in another sense: "lease rate" returns auto-loan rates, "penalty
+  APR" the standard APR, "daily ATM withdrawal limit" an unrelated passage. These need to
+  understand the question, not match its words.
+- Branches outside the crawled locator are answered from articles, so the evidence can be
+  old ("since 2002 … a branch in Platteville"). The answer says so and cites the page.
 - Question understanding is rules and word lists. Rewordings outside them fall through to
   free text. Parsing the question into the fact key is the one step where a language model
   (temperature 0, cached) would help most while leaving the choice of value to the rules.

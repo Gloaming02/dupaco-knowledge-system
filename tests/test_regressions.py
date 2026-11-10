@@ -13,7 +13,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "solution"), str(ROOT / "harness")]
 import solution  # noqa: E402
+from kb import fees  # noqa: E402
 from kb.dates import as_of_date  # noqa: E402
+from kb.rates import _in_band  # noqa: E402
+from kb.store import PageVersion, SnapshotView  # noqa: E402
 from run_eval import load_snapshots  # noqa: E402
 from scoring import _numbers, contains, score_conflicts, score_item  # noqa: E402
 
@@ -35,6 +38,84 @@ class AsOfDate(unittest.TestCase):
                             ("2026-05", "2026-05-31"), ("May 2026", "2026-05-31"),
                             ("not a date", None), ("", None), (None, None)]:
             self.assertEqual(as_of_date(given), want, given)
+
+
+class TierBoundaries(unittest.TestCase):
+    """"$10,000 – $24,999.99" means 10,000 up to, not including, 25,000."""
+
+    def test_single_amounts(self):
+        inf = float("inf")
+        for band, amount, inside in [
+            ((10000, 24999.99), 10000, True), ((2500, 9999.99), 10000, False),       # lower edge
+            ((10000, 24999.99), 24999.99, True), ((10000, 24999.99), 24999.5, True),
+            ((10000, 24999.99), 25000, False), ((25000, inf), 25000, True),          # upper edge
+            ((10000, 24999), 24999.5, True), ((25000, 39999), 25000, True),          # whole-dollar bands
+            ((10000, 20000), 20000, True), ((20001, 50000), 20000, False), ((20001, 50000), 20001, True),
+            ((0, 300000), 300000, True), ((0, 300000), 300001, False),               # "$300,000 or less"
+            ((1000, inf), 999, False), ((100000, inf), 100000, True),                # minimum to earn
+        ]:
+            self.assertEqual(_in_band(band, (amount, amount)), inside, (band, amount))
+
+    def test_a_range_names_a_tier_by_its_printed_ends(self):
+        self.assertTrue(_in_band((10000, 24999.99), (10000, 24999)))
+        self.assertTrue(_in_band((10000, 24999.99), (10000, 25000)))
+        self.assertFalse(_in_band((2500, 9999.99), (10000, 24999)))
+        self.assertFalse(_in_band((25000, float("inf")), (10000, 24999)))
+
+
+def page(url, markdown, tier=3, title="Fee Schedule"):
+    return PageVersion(url=url, key=url, title=title, markdown=markdown, snapshot_id="s1",
+                       taken_on="2026-01-01", tier=tier, printed_date=None)
+
+
+class Fees(unittest.TestCase):
+    """Fee rows from the three layouts a site uses, on made-up pages (runs from a bare clone)."""
+
+    TABLE = ("## Rate and Fee Schedule\n\n|Deposit Services Consumer|Col2|\n|---|---|\n"
+             "|Stop payment (check, ACH, &amp; bill pay)|$30.00* per item|\n|Deposit Services Business||\n"
+             "|Sweep Fee|$10.00* per month|\n|Teller and Cash Handling Service Charges||\n|Money orders|$5.00*each|\n"
+             "\n---\n\n|Official check|$5.00* each|\n|---|---|\n"
+             "|Incoming wire transfer|$10.00|\n|Domestic wire|$25.00 each|\n|International wire transfer|$55.00 each|\n")
+    TEXT = ("Rate and Fee Schedule\n\nDeposit Services Consumer\nStop payment (check, ACH, & bill pay) $30.00\\* per item\n"
+            "Consumer overdrafts (paid items) $30.00 per item\n_You will not be charged an overdraft fee if we pay an "
+            "overdraft transaction that is less than $5.00._\nForeign currency exchange fee\n(includes Canadian checks) $35.00\n")
+    PROSE = ("There is no annual fee. Other fees include: cash advance fee—$10.00 or 3.00% of the amount of each cash "
+             "advance, whichever is greater; late payment fee is $15.00 or the minimum due; returned payment fee—up to $25. "
+             "Offer valid only on the Platinum card.")
+
+    def book(self, *pages):
+        return fees.FeeBook(SnapshotView("s1", "2026-01-01", {p.key: p for p in pages}))
+
+    def test_table_rows_with_sub_headings_and_a_data_row_as_header(self):
+        got = {f.label: (f.amount, f.business) for f in fees.extract(page("https://x.test/fees.pdf", self.TABLE))}
+        self.assertEqual(got["Stop payment (check, ACH, & bill pay)"], ("$30.00 per item", False))
+        self.assertEqual(got["Sweep Fee"], ("$10.00 per month", True))            # under "Deposit Services Business"
+        self.assertEqual(got["Official check"][0], "$5.00 each")                  # the second table's "header"
+
+    def test_plain_text_rows_wrapped_labels_and_no_sentences(self):
+        got = {f.label: f.amount for f in fees.extract(page("https://x.test/fees.pdf", self.TEXT))}
+        self.assertEqual(got["Consumer overdrafts (paid items)"], "$30.00 per item")
+        self.assertEqual(got["Foreign currency exchange fee (includes Canadian checks)"], "$35.00")
+        self.assertFalse([l for l in got if l.startswith("You will not")])
+
+    def test_disclosure_sentence(self):
+        got = {f.label: f.amount for f in fees.extract(page("https://x.test/cards", self.PROSE, tier=4, title="Credit Cards"))}
+        self.assertEqual(got["late payment fee"], "$15.00 or the minimum due")
+        self.assertEqual(got["returned payment fee"], "up to $25")
+
+    def test_blog_fees_are_not_facts(self):
+        self.assertEqual(fees.extract(page("https://x.test/blog/fees", self.TABLE, tier=1)), [])
+
+    def test_lookup_names_the_fee_or_its_family_or_nothing(self):
+        book = self.book(page("https://x.test/fees.pdf", self.TABLE), page("https://x.test/cards", self.PROSE, tier=4))
+        labels = lambda q: [f.label for f in book.lookup(q)]
+        self.assertEqual(labels("How much is an international wire?"), ["International wire transfer"])
+        self.assertEqual(labels("Is there a fee for an outgoing wire transfer?"),
+                         ["Incoming wire transfer", "Domestic wire", "International wire transfer"])
+        self.assertEqual(labels("What is the late payment fee on the Platinum card?"), ["late payment fee"])
+        self.assertEqual(labels("What's the sweep fee for my business?"), ["Sweep Fee"])
+        self.assertEqual(labels("What's the sweep fee?"), [])                      # a business fee, not asked as one
+        self.assertEqual(labels("What is the annual fee?"), [])                    # no such row: no answer
 
 
 class SyntheticSite(unittest.TestCase):
@@ -99,6 +180,31 @@ class Dupaco(unittest.TestCase):
         self.says("What does the HSA pay on $12,000?", "0.30%")
         self.says("What is the health savings account APY on $12,000?", "0.30%")
 
+    def test_round_balance_is_the_tier_it_opens(self):
+        self.says("What's the Share Savings APY on $10,000?", "0.15%", never=["0.10%"])
+        self.says("What's the Share Savings APY on $25,000?", "0.20%", never=["0.15%"])
+        self.says("What APY does High-Yield Savings pay on $100,000?", "1.85%", never=["1.50%"])
+        self.says("Investor's Choice Money Market APY with a $25,000 balance?", "0.35%", never=["0.30%"])
+        self.says("What's the APR on a $20,001 home improvement loan?", "8.75%", never=["8.50%"])
+        self.says("What dividend rate do I earn on Share Savings with a balance between $10,000 and $24,999?", "0.15")
+
+    def test_term_unit_is_not_a_product_word(self):
+        self.says("I'm buying a 2025 Toyota — what's your 60 mo rate?", "5.39%", never=["6.74%"])
+
+    def test_online_is_not_a_request_for_a_link(self):
+        self.says("What is the APY on a Bright Savings online savings account?", "2.25%")
+        self.says("How do I join Dupaco online?", "join.dupaco.com")
+        self.says("Where can I see certificate rates online?", "dupaco.com/personal/savings-account")
+
+    # -- fees -------------------------------------------------------------------------------
+    def test_fees_come_from_fee_rows(self):
+        self.says("How much is an international wire?", "$55.00", never=["$10.00", "$25.00"])
+        self.says("What does a domestic wire cost?", "$25.00", as_of="2026-05-15")      # text-layout schedule
+        self.says("What's the cash advance fee on the Platinum Visa?", "$10.00 or 3.00%", never=["2.90%"])
+        self.says("What is the late payment fee on the Platinum Visa?", "$15.00", never=["$35.00"])
+        self.says("What's the late fee on a business credit card?", "$35.00", never=["$15.00"])
+        self.says("How much does a 6 month share certificate pay?", "3.40%")             # a rate, not a fee
+
     # -- time -------------------------------------------------------------------------------
     def test_mortgage_apr_is_not_the_points_column(self):
         self.says("What is the 30-year fixed mortgage APR?", "6.186%", never=["0.00%"], as_of="2026-05-15")
@@ -125,6 +231,23 @@ class Dupaco(unittest.TestCase):
     def test_unknown_branch(self):
         self.declines("what are the lobby hours for the mullan avenue branch")
         self.declines("What are the hours for the Key West branch?")
+
+    def test_product_or_term_the_site_never_mentions(self):
+        self.declines("How much does a crypto savings account pay?")
+        self.declines("What's the APY on a quantum money market account?")
+        self.declines("What's the swift code for Dupaco?")
+        self.says("What's the rate on a used car loan?", "5.39%")                         # description, not a product
+        self.says("What's the rate for a short-term personal loan?", "9.99%")
+
+    # -- branches ---------------------------------------------------------------------------
+    def test_branch_outside_the_crawled_locator(self):
+        ans = self.says("Is there a branch in Madison?", "Mineral Point")
+        self.assertTrue(ans.confident)
+        self.assertFalse(self.ks.answer("Is there a branch in Chicago?").confident)
+        self.says("Do you have a branch in Asbury?", "closing")                           # closure outranks mentions
+        self.says("What is the address of the Dyersville branch?", "807 Ninth St. SE")
+        self.declines("What's the address of the Platteville branch?")                    # not an ATM's address
+        self.says("What is the address of the Galena Branch?", "11375 Oldenburg")         # locator still first
 
     # -- company facts ----------------------------------------------------------------------
     def test_company_stats_reworded(self):

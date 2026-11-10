@@ -91,6 +91,8 @@ Before comparing values, normalise the full fact key. These are **not** conflict
   the question says "dividend rate".
 - **different term**: 48 vs 60 vs 84 months.
 - **different tier**: regular ($1,000 min) vs jumbo ($100,000 min); balance bands for Share Savings.
+  A band printed "$10,000 – $24,999.99" covers 10,000 up to, not including, 25,000: a balance
+  of exactly $25,000 is the "$25,000+" tier.
 - **different model-year band**: "2023–26" (calculator) vs "2024-27" (rates). A question about a
   2025 vehicle matches a row in both, so R2 decides which page counts, not R4.
 - **personal vs business vs IRA**: "Prime Checking" vs "Prime Business Checking". Roth vs Traditional IRA.
@@ -126,7 +128,13 @@ branch" text, **no digits at all**) when:
 - the only evidence for a *rate* is tier E/X (blog, newsroom, legacy): old blog numbers don't
   count as a current rate. A tier-D landing page may answer when it is the only page that lists
   the product and the offer has not ended or been withdrawn (Achieve Money Market).
-- the product is priced by term and the term asked for isn't listed (a 10-year mortgage).
+- the product is priced by term and the term asked for isn't listed (a 10-year mortgage);
+- the question's key word, or a word in the product's noun phrase, is used nowhere on the
+  site's product pages ("SWIFT code", "crypto savings account").
+
+A fee is answered only from a fee row whose label the question names (`kb/fees.py`), never
+from a passage that mentions a fee: "cash advance fee" must not return the 2.90% intro APR
+printed in the same footnote.
 
 Never put a number in a refusal. The scorer fails a refusal that contains any number not
 already in the question, **including a phone number** (800-373-7600 parses as numbers). So

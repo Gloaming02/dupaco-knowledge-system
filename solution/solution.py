@@ -8,6 +8,8 @@ The rules behind every decision are in docs/RULES.md. Layout:
     kb/authority.py  page trust tiers from the URL (R2)
     kb/dates.py      dates printed on the page (R3)
     kb/index.py      BM25 per snapshot, re-ranked by authority
+    kb/rates.py      rate questions answered from structured rate facts (R4)
+    kb/fees.py       fee questions answered from fee-schedule rows
 """
 import sys
 from pathlib import Path
@@ -48,8 +50,8 @@ except ImportError:  # running without the kit's harness on the path: same shape
 
 import re  # noqa: E402
 
-from kb import directory, rates  # noqa: E402
-from kb.links import INTENT as LINK_INTENT, LinkBook  # noqa: E402
+from kb import directory, fees, rates  # noqa: E402
+from kb.links import ACTION_Q as LINK_ACTION, INTENT as LINK_INTENT, LinkBook  # noqa: E402
 from kb.conflicts import find as find_conflicts  # noqa: E402
 from kb.dates import as_of_date  # noqa: E402
 from kb.index import SnapshotIndex  # noqa: E402
@@ -68,6 +70,7 @@ class KnowledgeSystem:
         self.indexes = {}          # snapshot_id -> SnapshotIndex
         self.ratebooks = {}        # snapshot_id -> RateBook
         self.linkbooks = {}        # snapshot_id -> LinkBook
+        self.feebooks = {}         # snapshot_id -> FeeBook
         self._cache = {}           # (snapshot_id, question) -> Answer: same question, same answer (R8)
         self._stats_cache = {}
         self._conflicts = None
@@ -83,8 +86,10 @@ class KnowledgeSystem:
         self.ratebooks[view.snapshot_id] = rates.RateBook(
             [f for p in pages if p.tier >= 2 for f in p.facts],
             site_df=self.indexes[view.snapshot_id].df,
-            withdrawn=[f for p in pages for f in p.stale_facts])
+            withdrawn=[f for p in pages for f in p.stale_facts],
+            on_product_pages=self.indexes[view.snapshot_id].on_product_pages)
         self.linkbooks[view.snapshot_id] = LinkBook(view)
+        self.feebooks[view.snapshot_id] = fees.FeeBook(view)
 
     def answer(self, question, as_of=None):
         if not self.store.snapshots:
@@ -109,7 +114,7 @@ class KnowledgeSystem:
         return ans
 
     def _answer(self, question, view):
-        for route in (self._link, self._hours, self._address, self._branch_in, self._phone, self._stats):
+        for route in (self._link, self._hours, self._address, self._branch_in, self._phone, self._stats, self._fee):
             try:
                 a = route(question, view)
             except Exception:          # a specialised route must never sink the whole answer
@@ -135,7 +140,7 @@ class KnowledgeSystem:
             if rq.asks_number:
                 # A rate question no current rate table answers: don't guess from blog text (R6).
                 return Answer(text=REFUSAL, confident=False)
-        if (missing := self._unknown_entity(question, view)):
+        if (missing := self._unknown_entity(question, view) or self._unknown_term(question, view)):
             return Answer(text=REFUSAL, confident=False,
                           conflict_note=f"'{missing}' does not appear anywhere on the site in {view.snapshot_id}.")
         hits = self.indexes[view.snapshot_id].search(question, k=40)
@@ -244,8 +249,15 @@ class KnowledgeSystem:
     def _src(page, quote=None):
         return [Source(url=page.url, snapshot_id=page.snapshot_id, quote=quote)]
 
+    WHERE_Q = re.compile(r"\bwhere\b|\bhow (?:do|can|could|would) (?:i|we|you)\b", re.I)
+
     def _link(self, q, view):
-        if not LINK_INTENT.search(q) or not re.search(r"\b(link|url|website|web ?page|online|site)\b", q, re.I):
+        # A link is wanted when the question asks for one, or asks where or how to do something
+        # online ("join online", "where can I see rates online"). "Online" alone is not enough:
+        # "the APY on an online savings account" is a question about a product.
+        asks_link = re.search(r"\b(link|url|website|web ?page|web address|site)\b", q, re.I)
+        does_online = re.search(r"\bonline\b", q, re.I) and (LINK_ACTION.search(q) or self.WHERE_Q.search(q))
+        if not LINK_INTENT.search(q) or not (asks_link or does_online):
             return None
         urls = self.linkbooks[view.snapshot_id].best(q)
         if not urls:
@@ -330,7 +342,17 @@ class KnowledgeSystem:
         if len(hits) > 1:
             return Answer(text=f"There are {len(hits)} branches matching {name}: " +
                                "; ".join(e["address"] for e in hits) + ".", sources=self._src(hits[0]["page"]))
-        return None          # not in the locator: let the general search try (e.g. closed branches)
+        # Not in the locator: a sentence elsewhere that gives the branch's street address. If the
+        # site speaks of the branch but never gives an address, say so instead of returning the
+        # nearest address-shaped passage (an ATM in the same town). A branch the site never
+        # places anywhere goes to the general search, which is how closed branches are found.
+        if (said := self._branch_mentions(name, view, need_street=True)):
+            return said
+        if re.search(r"\baddress\b", q, re.I) and self._branch_mentions(name, view):
+            return Answer(text=f"Dupaco's website mentions a {name} branch, but I couldn't find its street address "
+                               f"there, so I don't want to guess. Please contact Dupaco or use the branch locator.",
+                          confident=False)
+        return None
 
     PLACE = re.compile(r"\bbranch(?:es)?\s+(?:in|at|near)\s+((?:[A-Z][\w'.-]*\s?){1,3})")
 
@@ -353,11 +375,46 @@ class KnowledgeSystem:
         if hits:
             return Answer(text=f"Yes. Dupaco has {len(hits)} branch location(s) in {place}: " +
                                "; ".join(e["address"] for e in hits) + ".", sources=self._src(page))
+        # The crawled locator is a map widget and may hold only part of the branch list, so "not
+        # in the locator" is not "no branch": look at what the rest of the site says first.
+        if (said := self._branch_mentions(place, view)):
+            return said
         if page:
             return Answer(text=f"I don't see a Dupaco branch in {place} in the branch locator. Please check "
                                f"the locator at https://www.dupaco.com/contact or contact Dupaco.",
                           confident=False, sources=self._src(page))
         return None
+
+    def _branch_mentions(self, place, view, need_street=False):
+        """What the rest of the site says about a branch in `place`: the newest-dated sentence
+        that speaks of one, and a closure announcement before anything else (rule R5)."""
+        name = re.escape(place)
+        rx = re.compile(rf"\b{name}\b[^.\n|]{{0,50}}\b(?:branch|learning lab)\b|"
+                        rf"\bbranch(?:es)?\b[^.\n|]{{0,50}}\b{name}\b", re.I)
+        found = {}
+        for page, text in self.indexes[view.snapshot_id].docs:
+            if page.expired or not rx.search(text):
+                continue
+            # Sentences, without breaking after an abbreviation ("807 Ninth St. SE", "Wis.").
+            for sent in re.split(r"(?<![A-Z][a-z]\.)(?<![A-Z][a-z]{2}\.)(?<=[.!?])\s+(?=[A-Z“\"])", text):
+                if not rx.search(sent) or (need_street and not self.STREET.search(sent)):
+                    continue
+                sent = sent.strip()[:320]
+                rank = (bool(re.search(r"\bclos(?:e|ed|es|ing|ure)\b", sent, re.I)),
+                        page.printed_date or "", page.tier, page.key)
+                if sent not in found or rank > found[sent][0]:
+                    found[sent] = (rank, page)
+        if not found:
+            return None
+        sent, (rank, page) = max(found.items(), key=lambda kv: (kv[1][0], kv[0]))
+        return Answer(text=f"{place} is not in the branch locator captured in this snapshot. "
+                           f"Elsewhere the site says: “{sent}”",
+                      sources=self._src(page, sent[:200]),
+                      conflict_note=f"From a {rates.authority_name(page.tier)}"
+                                    + (f" dated {rank[1]}" if rank[1] else "") + ", not the branch locator.")
+
+    STREET = re.compile(r"\b\d{2,5}\s+(?:[A-Z][\w.']*\s+){1,4}(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Hwy|Highway|"
+                        r"Way|Dr|Drive|Ln|Lane|Ct|Court|Pkwy|Parkway)\b")
 
     PHONE_Q = re.compile(r"\b(phone|call|telephone|contact number)\b", re.I)
     PHONE = re.compile(r"\b(?:1[-. ])?(\d{3})[-. ](\d{3})[-. ](\d{4})\b")
@@ -410,6 +467,26 @@ class KnowledgeSystem:
                       conflict_note="Taken from the newest 'About Dupaco' statement (largest member count); "
                                     "older articles repeat outdated counts.")
 
+    def _fee(self, q, view):
+        """'How much is a domestic wire?': answered from fee-schedule rows, never from a passage
+        that only mentions a fee. No matching row -> the general search gets its turn."""
+        if not fees.INTENT.search(q):
+            return None
+        if rates.RATE_INTENT.search(q) and not re.search(r"\bfees?\b", q, re.I):
+            return None                     # "how much does a certificate pay" is a rate question
+        book = self.feebooks[view.snapshot_id]
+        rows = book.lookup(q)
+        if not rows:
+            return None
+        text = "; ".join(f"{f.label[:1].upper()}{f.label[1:]}: {f.amount}" for f in rows) + "."
+        pages = list({f.page.key: f.page for f in rows}.values())
+        others = sorted({a for f in rows for a in book.other_amounts(f)})
+        note = (f"Other pages print {'; '.join(others[:3])} for the same fee; using {pages[0].url} "
+                f"({rates.authority_name(pages[0].tier)}).") if others else None
+        return Answer(text=text[:900], conflict_note=note,
+                      sources=[Source(url=p.url, snapshot_id=p.snapshot_id,
+                                      quote=next(f.text for f in rows if f.page is p)[:200]) for p in pages])
+
     PROPER = re.compile(r"(?<![.?!]\s)(?<!^)\b([A-Z][a-z]+(?:[\s-][A-Z][a-z]+)*)\b")
 
     def _unknown_entity(self, q, view):
@@ -424,6 +501,22 @@ class KnowledgeSystem:
             ws = [w for w in re.split(r"[\s-]", phrase) if w not in ignore]
             if ws and all(idx.df(w) == 0 for w in ws):
                 return phrase
+        return None
+
+    def _unknown_term(self, q, view):
+        """A question whose key word the site never uses ("SWIFT code") can't be answered from
+        the site. Only when that word carries a real share of the question, so one stray or
+        misspelled filler word in a long question doesn't cause a refusal."""
+        from kb.text import TOKEN, STOP, _stem
+        idx = self.indexes[view.snapshot_id]
+        if not idx.idf:
+            return None
+        rare = max(idx.idf.values())
+        words = {_stem(w): w for w in TOKEN.findall(q.lower()) if w not in STOP and w.isalpha() and len(w) > 3}
+        total = sum(idx.idf.get(t, rare) for t in words)
+        unseen = [w for t, w in words.items() if t not in idx.idf]
+        if unseen and rare * len(unseen) / total >= 0.4:
+            return unseen[0]
         return None
 
     def conflicts(self):
